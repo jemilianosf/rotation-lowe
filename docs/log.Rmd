@@ -26,11 +26,12 @@ https://www.internationalgenome.org/data-portal/data-collection/phase-3
 To-do for today:
 - Go through GO tutorial.
 - Start planning the project.
-  - Go over GWAS catalog:
+  - Go over GWAS catalog in results/gwas_catalog_exploration.Rmd:
     How to download trait / loci AND population information ?
 
 The ancestry information from the gwas catalog is not super clean:
 there is multiple ancestries per study in some cases, though most are just European.
 
-- Installing plink.
+
+- Go over / install plink.
 
