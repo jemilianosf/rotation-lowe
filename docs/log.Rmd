@@ -1,0 +1,36 @@
+---
+title: "log"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Description
+High level overview of daily analyses / lab activities.
+
+# 2022-01-10
+
+To-do for today:
+- Talk with Riley.
+- Register rotation in T3.
+- Read HAQER manuscript.
+- Start planning the project.
+- Go trhough GO tutorial.
+
+Some useful links:
+https://www.internationalgenome.org/data-portal/data-collection/phase-3
+
+# 2022-01-11
+To-do for today:
+- Go through GO tutorial.
+- Start planning the project.
+  - Go over GWAS catalog:
+    How to download trait / loci AND population information ?
+
+The ancestry information from the gwas catalog is not super clean:
+there is multiple ancestries per study in some cases, though most are just European.
+
+- Installing plink.
+

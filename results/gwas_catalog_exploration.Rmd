@@ -1,0 +1,191 @@
+---
+title: "gwas_catalog_exploration"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+
+```
+
+# Read gwas catalog data
+
+```{r}
+gwas_catalog_ancestry <- read_tsv("../data_raw/gwas_catalog/gwas_catalog-ancestry_r2021-12-21.tsv")
+```
+
+# Exploration of ancestries
+```{r}
+gwas_catalog_ancestry <- gwas_catalog_ancestry %>%
+  mutate(broad_ancestral_category = `BROAD ANCESTRAL CATEGORY`) 
+
+```
+
+How many studies per ancestry are there for the top 10 most abundant single ancestry studies?
+```{r}
+gwas_catalog_ancestry %>%
+  count(broad_ancestral_category,name = "ancestry_count") %>%
+  top_n(n = 10) %>%
+  mutate(broad_ancestral_category = fct_reorder(broad_ancestral_category,ancestry_count)) %>%
+  ggplot(aes(broad_ancestral_category,ancestry_count, fill = broad_ancestral_category)) +
+  geom_col() +
+  coord_flip() +
+  ylab(NULL) +
+  theme_minimal() +
+  theme(aspect.ratio = 1,legend.position = "none") +
+  scale_fill_brewer(type = "qual",palette = 3)
+```
+
+How many studies per ancestry are there for the top 10 most abundant single ancestry studies, taking out European?
+
+```{r}
+gwas_catalog_ancestry %>%
+  count(broad_ancestral_category,name = "ancestry_count") %>%
+  top_n(n = 10) %>%
+  mutate(broad_ancestral_category = fct_reorder(broad_ancestral_category,ancestry_count)) %>%
+  filter(broad_ancestral_category != "European") %>%
+  ggplot(aes(broad_ancestral_category,ancestry_count, fill = broad_ancestral_category)) +
+  geom_col() +
+  coord_flip() +
+  ylab(NULL) +
+  theme_minimal() +
+  theme(aspect.ratio = 1,legend.position = "none") +
+  scale_fill_brewer(type = "qual",palette = 3)
+```
+
+# Explore SNP data
+
+```{r}
+gwas_catalog_snp <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+```
+
+```{r}
+gwas_catalog_snp %>%
+  count(MAPPED_TRAIT,name = "trait_count") %>%
+  top_n(n = 10) %>%
+  mutate(MAPPED_TRAIT = fct_reorder(MAPPED_TRAIT,trait_count)) %>%
+  ggplot(aes(MAPPED_TRAIT,trait_count, fill = MAPPED_TRAIT)) +
+  geom_col() +
+  coord_flip() +
+  ylab(NULL) +
+  theme_minimal() +
+  theme(aspect.ratio = 1,legend.position = "none") +
+  scale_fill_brewer(type = "qual",palette = 3)
+```
+
+
+
+There are multiple ancestries per study!
+```{r}
+rowSums(table(gwas_catalog_ancestry$`STUDY ACCESSION`,gwas_catalog_ancestry$broad_ancestral_category)) %>%
+  enframe(name = "study_accession",value = "count") %>%
+  ggplot(aes(count)) +
+  geom_histogram()
+  
+```
+
+For now focus on single ancestry studies
+```{r}
+!duplicated(gwas_catalog_ancestry$`STUDY ACCESSION`,)
+
+gwas_catalog_ancestry_nodups <- gwas_catalog_ancestry[!(duplicated(gwas_catalog_ancestry$`STUDY ACCESSION`) | duplicated(gwas_catalog_ancestry$`STUDY ACCESSION`, fromLast = TRUE)),]
+
+```
+
+Join SNPs and Ancestries
+```{r}
+gwas_catalog_snp <- gwas_catalog_snp %>%
+  select("CHR_ID","CHR_POS","SNP_ID_CURRENT","DISEASE/TRAIT","STUDY ACCESSION")
+
+gwas_catalog_ancestry_nodups <- gwas_catalog_ancestry_nodups %>%
+  select("broad_ancestral_category","ADDITONAL ANCESTRY DESCRIPTION","STUDY ACCESSION")
+
+gwas_snp_ancestry<- left_join(gwas_catalog_snp, gwas_catalog_ancestry_nodups,by = "STUDY ACCESSION")
+
+```
+
+# Quick exploration with HAQERs
+
+Read haqers
+```{r}
+library(rtracklayer)
+haqers <- import.bed("../data_raw/bed/HAQER.bed")
+```
+
+
+
+Get SNPs as GRanges
+```{r}
+gwas_snp_ancestry$CHR_POS <- as.numeric(gwas_snp_ancestry$CHR_POS)
+
+gwas_snp_ancestry <- gwas_snp_ancestry[!is.na(gwas_snp_ancestry$CHR_POS),]
+
+gwas_snp_ancestry_granges <- GRanges(seqnames = gwas_snp_ancestry$CHR_ID,
+        ranges = IRanges(start = gwas_snp_ancestry$CHR_POS,width = 1))
+
+elementMetadata(gwas_snp_ancestry_granges) <- DataFrame(gwas_snp_ancestry)
+```
+
+
+```{r}
+library(plyranges)
+```
+
+```{r}
+seqlevels(haqers) <- str_remove(seqlevels(haqers),"chr")
+
+
+haqers$name <- paste0("haqer",1:length(haqers))
+haqers_snp_ancestry <- plyranges::join_overlap_inner_within(gwas_snp_ancestry_granges, haqers)
+```
+```{r}
+haqers_snp_ancestry %>%
+  as.data.frame() %>%
+  ggplot(aes(DISEASE.TRAIT)) +
+  geom_bar() +
+  coord_flip() +
+  theme_minimal()
+```
+```{r}
+haqers_snp_ancestry %>%
+  as.data.frame() %>%
+  ggplot(aes(broad_ancestral_category)) +
+  geom_bar() +
+  coord_flip() +
+  theme_minimal()
+
+```
+
+```{r}
+
+A <- GRanges(seqnames = "chr1",
+        ranges = IRanges(10,width = 7))
+B <- GRanges(seqnames = "chr1",
+        ranges= IRanges(5,15))
+join_overlap_inner_within(A, B)
+
+```
+
+
+```{r}
+countOverlaps(haqers,gwas_snp_ancestry_granges) %>%
+  enframe() %>%
+  ggplot(aes(value)) +
+  geom_histogram(bins = 5)
+```
+
+```{r}
+haqers_dist_to_nearest_snp <- distanceToNearest(haqers,gwas_snp_ancestry_granges)
+
+haqers_dist_to_nearest_snp@elementMetadata$distance %>%
+  enframe() %>%
+  ggplot(aes(value)) +
+  geom_histogram(bins = 100)
+
+
+summary(haqers_dist_to_nearest_snp@elementMetadata$distance < 100)
+```
+
+
