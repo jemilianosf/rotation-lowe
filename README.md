@@ -1,9 +1,18 @@
-# template_analysis
-This is a template for an analysis project.
+# Rotation @ Lowe lab
 
-This directory structure is designed to work with Rstudio for interactive analysis and documentation, while having an execution folder for using on a HPC cluster.
+10/Jan/2022 Contact: Emiliano Sotelo jemilianosf@gmail.com
 
-The idea is that all the code and documentation live in GitHub, my laptop and the HPC cluster. 
-Most of the data is stored in the cluster, where the bash or nextflow pipelines are ran, and the downstream analysis is done in an Rmarkdown file.
+This is a repository for my rotation project at the Lowe lab.
+
+The repo's directories: 
+data_clean - most useful data files generated from analyses
+data_output - data files generated from analyses
+data_raw - input data for analyses (e.g. gwas catalog)
+docs - main docs are the log (overview description of analyses), and reading notes.
+results - output figures and/or markdown documents.
+scripts
+other - misc
+
+
 
 
