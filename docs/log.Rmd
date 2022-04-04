@@ -33,5 +33,300 @@ The ancestry information from the gwas catalog is not super clean:
 there is multiple ancestries per study in some cases, though most are just European.
 
 
-- Go over / install plink.
+
+# 2022-01-12
+To-do for today:
+- Read the classic gwas and har paper.
+
+# 2022-01-13
+- GO bookmark: https://go.dev/tour/methods/11
+Interfaces get very abstract very fast.
+
+- Draw pipeline flowchart. 
+
+- Think about the 1000 genomes project.
+https://www.internationalgenome.org/data-portal/data-collection/30x-grch38
+- Go over plink methods.
+https://www.frontiersin.org/articles/10.3389/fgene.2020.00157/full
+https://www.cog-genomics.org/plink/1.9/ld
+https://ldlink.nci.nih.gov/?tab=home
+https://zzz.bwh.harvard.edu/plink/ld.shtml
+https://en.wikipedia.org/wiki/Linkage_disequilibrium
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373508;r=1:230709548-230710548;v=rs699;vdb=variation;vf=94
+
+
+# 2022-01-14
+- Download and explore a 1000 genomes vcf 
+results/genomes1000_exploration.Rmd
+https://www.internationalgenome.org/data-portal/data-collection/30x-grch38
+- Install plink 
+- Go - interfaces 
+
+# 2022-01-17
+- Trial run of calculating LD with 1000 genomes vcf and gwas catalog tag snps
+- Update / work on presentation / plan
+- Update Chelsea
+- Ask Craig for general notes
+- Go - interfaces
+
+# 2022-01-18
+- Go - go routines 
+- Prepare what to ask / show for the meeting
+
+From what I've seen the way to go is to intersect by genomic ranges:
+1. Match GWAS catalog tsv with 1000 genomes vcf by coordinates. Get the ID from the matching VCF record.
+
+2. Get LD for each of those matching snps.
+3. Get list of snps
+
+# 2022-01-19
+- Match GWAS catalog with 1000 genomes by coordinates.
+- Meeting with Chelsea
+  - Matching by coordinate between 1000 genomes and gwas catalog
+  - Calculating LD, explore different filters from plink function
+  - Compare result to the interactive GWAS catalog result as a sanity check
+  - Consider if we can use an existing gonomics tool or create a new one for this.
+- Lab meeting
+- Work on matching 
+
+
+# 2022-01-20
+- Goal for today is to get a complete first pass in a new markdown
+- I also want to do a new version of the data flow pipeline / model just to have everything clear.
+- Also connect to DCC / start working on that.
+- Get the sanity check comparisons going:
+  - LD decay plot per SNP 
+  - Global average LD decay 
+  - Check what is up with the far snps with high LD
+  - Calculate the "decay length"
+  - Or calculate the LD block with plink?
+
+- Gabriel et al 2002:
+  - Definition of haplotype blocks
+  - Average block size of 11-22 kb
+  - Max size 94kb in European 173kb African populations
+  
+Might be helpful: https://www.biostars.org/p/300381/
+
+- Try the chromosomal blocks
+- Filter vcf by population and to remove unrelated individuals
+
+# 2022-01-21
+These from yesterday:
+- Goal for today is to get a complete first pass in a new markdown
+- I also want to do a new version of the data flow pipeline / model just to have everything clear.
+- Also connect to DCC / start working on that.
+
+- Start by filtering vcf by population and remove unrelated individuals
+
+# 2022-01-24
+- First pass markdown: results/first_pass.Rmd
+- New version of diagram
+- Add the hacker overlaps: results/first_pass.Rmd
+- Think about how to extend the pipeline to all chromosomes on DCC: 
+  results/get_gwas_snp_list.Rmd
+  scripts/get_gwas_vcf_ids.R
+  scripts/run_get_gwas_ld_variants.sh
+- Connect to DCC 
+- Install packages
+- Download vcfs and move local data to DCC
+
+# 2022-01-25
+- Download vcfs to dcc
+- Work on presentation
+
+# 2022-01-26
+- Start of rotation presentation
+- Run plink ld for all chromosomes on DCC
+
+# 2022-01-27
+- Run plink ld for all chromosomes on DCC
+- Install go on the DCC
+- Updates 
+- Look into gonomics for overlaps
+- Try to use go for some of the steps
+- Look into the GWAS catalog summary statistics 
+ -> It looks like for a subset of studies, they provide summary statistics for all(?) snps but the ftp site is not working.
+ 
+ - The id the GWAS risk allele the "human" or "chimp" base, i.e. the derived allele?
+ 
+# 2022-01-31
+Things to work on this week (ordered by priority):
+- Block some time for "free exploration" of the whole chromosomes counts. Maybe think of new plots to add to the keynote.
+- Look more into the GWAS catalog summary statistics, maybe look at agreement between interval from GWAS catalog and PLINK
+- Get more into Go
+  - Do like a first Go program thing
+  - Use sequelOverlap for the overlap steps
+  - Set up Go/gonomics in DCC
+- Think about the controls / run the controls  
+
+Things to work on at some point:
+- Look into the variant aspect of things: look into the risk allele vs derived alleles
+- How would the ancestry part affect things
+
+
+For today:
+- Not free exploration as such but summarize the whole genome run results.
+- Computational meeting.
+- Did a "first pass" enrichment of phenotypes in resuts/first_pass_all_chrs.Rmd.
+- Look more into the GWAS catalog summary statistics in results/ results/gwas_catalog_exploration.Rmd
+Notes:
+Idea - Do an enrichment test using the EFO annotation data (https://www.ebi.ac.uk/ols/ontologies/mi/terms?iri=http%3A%2F%2Fpurl.obolibrary.org%2Fobo%2FMI_1337&viewMode=All&siblings=false)
+
+# 2022-02-01
+- Look more into the GWAS catalog summary statistics in  results/gwas_catalog_exploration.Rmd
+- Found a list of human specific chromatin loops and TAD boundaries to intersect later with haqers. Downloaded the list, in data_raw/xlsx/1-s2.0-S0092867421000015*
+- Generating the control regions for tests in scripts/get_random_beds.sh results/phenotype_enrichments.Rmd.
+- Downloaded EFO data to data_raw/gwas_catalog/efo.owl
+
+# 2022-02-02
+- Do phenotype enrichment tests in results/phenotype_enrichments.Rmd.
+  - Did the enrichment permutation approach, resulting phenotypes are in data_output/tsv/mapped_trait_haqers_pval_1000.tsv
+  - Also did another approach where I filtered haqers by width to see if there are any enrichment driven by differences in haqer length.
+  - Might be a good excercise to come up with a new version of simulateBed 
+
+# 2022-02-03
+- Try the EFO annotation to map phenotypes to broad categories.
+- Downloaded EFO data in OBO format to data_raw/obo/efo.obo
+- Started new markdown: results/efo_enrichments.Rmd
+- Moved exploration of EFO to scripts/efo_term_exploration.R
+- A note on estimating empirical p values https://www.ncbi.nlm.nih.gov/pmc/articles/PMC379178/
+
+# 2022-02-07
+
+For today:
+- Make slides with phenotypes 
+  - Moved the first pass phenotype enrichment from the exploration markdown to scripts/get_haqer_snp_overlaps.R
+  - The phenotype enrichment section into results/phenotype_enrichments_downstream_steps.
+
+
+
+- From last week, Get more into Go:
+  - Do like a first Go program thing
+  - Use sequelOverlap for the overlap steps
+  - Set up Go/gonomics in DCC
+  
+- For the week:
+- Follow up on specific haqers after meeting (like overlap with epigenome data etc.)
+- Clean up the pipeline / introduce more gonomics into filtering / overlaps steps
+- Think about the variant related questions maybe with African phenotypes (check vfcs in dcc).
+
+
+# 2022-02-08
+- Annotate phenotype slides with more info
+
+# 2022-02-09
+- Get the gwas phenotypes for the other haqers
+- Read more about asthma, vascular stuff, and 
+- Run pipeline with brain gwas data
+
+- Stuff to focus on:
+- Making pipeline re-usable
+- Putting together the 1000 genomes SNP bed files by EFO category
+- Running enrichments with gonomics
+
+# 2022-02-10
+Today: 
+- Making pipeline more re-usable:
+  - Sketch pipeline steps:
+    results/pipeline_sketch.md
+  
+  - Make a separate script for each step
+    - Start with the ld_plink to bed step
+
+  - Try to use go / gonomics when possible
+- Putting together the 1000 genomes SNP bed files by EFO category
+  - Run the pipeline step for 
+
+- Look at the 3d genome paper / HPO:
+GWAS traits and HPO traits
+https://maayanlab.cloud/Enrichr/#libraries
+
+Map genes to organ systems
+http://geneorganizer.huji.ac.il/organize
+
+- Look at gonomics:bedEnrichments
+- Start with the ld_plink to bed step:
+Figure out what gonomics:bedEnrichments expects and outputs: results/exploration_bedenrichments.Rmd
+- Made the script to get enrichments per trait: scripts/get_enrichments_per_trait.sh
+
+# 2022-02-11
+- Continued working on making scripts in docs/pipeline_sketch.md (either implementing them or making them more reusable.)
+# 2022-02-12
+- Asthma bone of the week.
+
+# 2022-02-14
+- Install gonomics on dcc
+- Move and setup pipeline scripts to dcc
+- Run thing on getting enrichments
+- Parse and analyze results
+
+# 2022-02-15
+- Re-do enrichments using exact
+- Figure out the multi EFO traits and Re-do these
+- Prepare BotW
+
+
+- HPO and brain for later (probably needs to address new variants, so make first part of pipeline reusable first)
+
+# 2022-02-16
+- Lab meeting
+- Generate more bed directories for EFO levels esp. disease level
+- Do other tests
+
+# 2022-02-17
+- Get disease level EFO ID - SNP mappings
+- Ran all four: disease, trait, exact, approx
+- Made changes to some scripts:
+run enrich
+enrich wrapper
+
+- Talk with Chelsea: 
+  - Would a different LD cutoff affect the results?
+- Check results in EFO
+
+# 2022-02-18
+- Try the move 1 down from disease category EFOs
+
+# 2022-02-21
+- Get beds / enrichments for the other traits that are not diseases
+- Get the annotated tables for the other phenotypes
+- Work on talk
+
+- For the week:
+ - work on the script to get new ld variants 
+ - Make map efo trait a script
+
+# 2022-02-22
+- Work on talk
+- Chat with Craig:
+  - What is up with the multi traits
+  - At least for schizophrenia
+  - Do a cleanup
+  
+# 2022-02-23
+- Rotation talk:
+
+- Coordinate with Riley
+  - What is the most helpful way for me to explain everything/let things
+  - Readme + diagram 
+  - Full pipeline?
+  
+- work on the script to get new ld variants
+
+- New version of everything:
+  - New haqers version:
+  - Add chromosome X (?)
+
+# 2022-02-24
+- Work on diagram
+- Go over all steps
+
+# 2022-02-28
+- Go over all steps
+
+# 2022-03-01
+- Go over all steps
+
+# 2022-03-02
 

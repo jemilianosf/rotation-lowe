@@ -1,0 +1,494 @@
+---
+title: "first_pass_whole_genome"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(rtracklayer)
+library(plyranges)
+options(scipen = 9999)
+```
+
+First pass calculating LD for all chromosomes.
+
+# Read in all LD files
+
+```{r}
+ld_files_list <- list.files("../data_output/plink/gwas_ld_snps_27jan22/",pattern = "ld_snps.ld",full.names = TRUE)
+
+out_ld_df <- do.call(rbind, lapply(ld_files_list, read_table))
+
+gc();gc();gc();
+```
+
+# Subsample df for LD plots
+```{r}
+out_ld_df_sample <- slice_sample(out_ld_df,n = 1000000)
+```
+
+# Filter by R2 > 0.7
+
+Filtering for LD with R2 of at least 0.7
+```{r}
+out_ld_df <- out_ld_df %>%
+  filter(R2 >= 0.7)
+gc();gc();gc();
+```
+
+# Make GRanges for overlaps
+
+```{r}
+out_ld_gr <- makeGRangesFromDataFrame(df = out_ld_df,
+                         seqnames.field = "CHR_B",
+                         start.field = "BP_B",
+                         end.field = "BP_B",
+                         keep.extra.columns = TRUE)
+```
+
+
+# LD plots
+
+## Average "LD decay length"
+  
+This plot shows the distributions of ranges between SNPs with r2 > 0.2 with GWAS SNPs
+
+```{r}
+
+out_ld_df_sample %>%
+  group_by(SNP_A, CHR_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10() +
+  facet_grid(rows = vars(CHR_A))
+
+
+``` 
+
+This plot shows the distributions of ranges between SNPs with r2 > 0.7 with GWAS SNPs
+
+```{r}
+
+out_ld_df %>%
+  group_by(SNP_A, CHR_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10() +
+  facet_grid(rows = vars(CHR_A))
+
+```
+
+## Global LD decay 
+  
+```{r}
+out_ld_df_sample %>%
+ggplot(aes(abs(BP_A - BP_B)/1e3, R2)) +
+  geom_bin2d( ) +
+  scale_fill_gradient(low="lightgray",high="blue") +
+  geom_smooth(color = "black") +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  xlab("Distance (Kb)")
+```
+
+```{r}
+out_ld_df_sample %>%
+  filter(abs(BP_A -BP_B) < 100000) %>%
+ggplot(aes(abs(BP_A - BP_B)/1e3, R2)) +
+  geom_bin2d( ) +
+  scale_fill_gradient(low="lightgray",high="blue",) +
+  geom_smooth(color = "black") +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  xlab("Distance (Kb)")
+```
+
+```{r}
+out_ld_df_sample %>%
+  filter(abs(BP_A -BP_B) < 500000) %>%
+ggplot(aes(abs(BP_A - BP_B)/1e3, R2, color = as.factor(CHR_A))) +
+  geom_smooth(se = FALSE) +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  xlab("Distance (Kb)") +
+  scale_color_discrete(name = "Chr") 
+
+
+```
+```{r}
+out_ld_df_sample %>%
+  filter(abs(BP_A -BP_B) < 100000) %>%
+ggplot(aes(abs(BP_A - BP_B)/1e3, R2, color = as.factor(CHR_A))) +
+  geom_smooth(se = FALSE) +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  xlab("Distance (Kb)") +
+  scale_color_viridis_d(name = "Chr")
+
+```
+
+
+
+# Overlap with haqers
+
+Read haqers
+```{r }
+haqers <- import.bed("../data_raw/bed/HAQER.bed")
+
+haqers$name <- paste0("haqer",1:length(haqers))
+seqlevels(haqers) <- str_remove(seqlevels(haqers) , "chr")
+
+mean(width(haqers))
+```
+
+
+```{r}
+gwas_ld_snp_haqers_gr <- plyranges::join_overlap_inner(haqers,out_ld_gr)
+```
+
+# Summary of overlaps
+
+Number of haqers that overlap at least one snp
+```{r}
+length(unique(gwas_ld_snp_haqers_gr$name))
+```
+
+Haqers width
+```{r}
+summary(width(unique(gwas_ld_snp_haqers_gr)))
+```
+
+Number of LD SNPs per haqer
+```{r}
+
+gwas_snps_out_ld_filt_gr_haqers_df <- as.data.frame(elementMetadata(gwas_ld_snp_haqers_gr))
+
+summary(unlist(lapply(split(gwas_snps_out_ld_filt_gr_haqers_df,gwas_snps_out_ld_filt_gr_haqers_df$name), function(x){
+  length(unique(x$SNP_B))
+})))
+```
+
+Number of GWAS SNPs per haqer
+```{r}
+summary(unlist(lapply(split(gwas_snps_out_ld_filt_gr_haqers_df,gwas_snps_out_ld_filt_gr_haqers_df$name), function(x){
+  length(unique(x$SNP_A))
+})))
+```
+
+Total number of unique GWAS hits
+```{r}
+length(unique(gwas_snps_out_ld_filt_gr_haqers_df$SNP_A))
+```
+
+
+# Get super stringent list
+
+```{r}
+
+get_n_haqer_olaps <- function(thresh, haqers_gr, snps_gr) {
+  gwas_ld_snp_haqers_strict_gr <- plyranges::join_overlap_inner(haqers_gr,snps_gr[snps_gr$R2 >= thresh])
+return(length(unique(gwas_ld_snp_haqers_strict_gr$name)))
+}
+
+thresh_vec <- c(0.7,0.8,0.9,1)
+data.frame(thres = thresh_vec,
+           nhaqers = map_dbl(thresh_vec,get_n_haqer_olaps,haqers, out_ld_gr)) %>%
+  ggplot(aes(thres, nhaqers,label = nhaqers)) +
+  geom_point() +
+  geom_text(nudge_y = 10) +
+  theme_light() +
+  theme(aspect.ratio = 1)
+```
+
+```{r}
+gwas_ld_snp_haqers_strict_gr <- plyranges::join_overlap_inner(haqers,out_ld_gr[out_ld_gr$R2 == 1])
+```
+
+
+# Phenotypes of associated haqers
+
+Get gwas catalog information
+```{r}
+gwas_catalog_snp_gr <- readRDS("../data_output/gwas_catalog/gwas_catalog_snp_gr_uq.Rds")
+
+gwas_ld_snp_haqers_strict_df<- as.data.frame(gwas_ld_snp_haqers_strict_gr)
+gwas_catalog_snp_gr_df <- as.data.frame(gwas_catalog_snp_gr)
+
+gwas_ld_snp_haqers_strict_df$BP_A <- as.numeric(gwas_ld_snp_haqers_strict_df$BP_A)
+gwas_ld_snp_haqers_strict_df$CHR_A <- as.factor(gwas_ld_snp_haqers_strict_df$CHR_A)
+
+gwas_catalog_snp_gr_df$start <- as.numeric(gwas_catalog_snp_gr_df$start)
+
+
+haqer_snps_df <- left_join(gwas_ld_snp_haqers_strict_df,gwas_catalog_snp_gr_df, by = c("CHR_A"="seqnames","BP_A"="start"))
+
+haqer_snps <- haqer_snps_df$SNPS
+```
+
+```{r}
+gwas_catalog_snp <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+gwas_catalog_snp <- gwas_catalog_snp[gwas_catalog_snp$SNPS %in% haqer_snps_df$SNPS,]
+```
+
+
+Number of GWAS SNPs with each phenotype
+```{r}
+sort(table(gwas_catalog_snp$`DISEASE/TRAIT`),decreasing = TRUE)
+```
+
+
+List of phenotypes sorted by number of haqers associated with each phenotype
+```{r}
+gwas_catalog_snp <- gwas_catalog_snp[gwas_catalog_snp$SNPS %in% haqer_snps_df$SNPS,]
+
+
+haqer_trait_info_df <- left_join(haqer_snps_df,gwas_catalog_snp, by = "SNPS")[,c("name","DISEASE/TRAIT","MAPPED_TRAIT")]
+
+
+haqer_trait_info_df <- unique(haqer_trait_info_df)
+
+
+```
+
+```{r}
+map_dbl(split(haqer_trait_info_df$name, haqer_trait_info_df$MAPPED_TRAIT), function(x){
+  length(x)
+}) %>% sort(decreasing = TRUE)
+```
+
+```{r}
+map_dbl(split(haqer_trait_info_df$name, haqer_trait_info_df$`DISEASE/TRAIT`), function(x){
+  length(x)
+}) %>% sort(decreasing = TRUE)
+```
+
+Most haqers are associated with 1 or 2 phenotypes, some have more (up to 46)
+```{r}
+map_dbl(split(haqer_trait_info_df$`DISEASE/TRAIT`, haqer_trait_info_df$name), function(x){
+  length(x)
+}) %>%
+  summary()
+```
+
+
+
+
+
+```{r}
+gwas_catalog_snp[str_detect(gwas_catalog_snp$`DISEASE/TRAIT`,"Brain"),]$SNPS
+
+haqer_snps_df[haqer_snps_df$SNPS %in% gwas_catalog_snp[str_detect(gwas_catalog_snp$`DISEASE/TRAIT`,"Brain"),]$SNPS,]
+```
+
+# Human Brain Evolved Haqers
+
+Read Brain haqers
+```{r}
+haqers_brain <- c("chr9-113944-114443",
+"chr2-113503030-113503529",
+"chr18-2905945-2906444",
+"chr9-38526663-38527162",
+"chr14-104933453-104933952",
+"chr2-114662193-114662692",
+"chr1-11908050-11908549",
+"chr10-14185386-14185885",
+"chr18-904754-905253",
+"chr12-6943693-6944192",
+"chr1-148522541-148523040",
+"chr18-908756-909255",
+"chr14-34546586-34547085",
+"chr17-21511455-21511954",
+"chr1-144412503-144413002")
+
+haqers_brain_gr <- GRanges(seqnames = str_split(haqers_brain,pattern ="-") %>% map_chr(1),
+        ranges = IRanges(start = as.numeric(str_split(haqers_brain,pattern ="-") %>% map_chr(2)),
+                         end = as.numeric(str_split(haqers_brain,pattern ="-") %>% map_chr(3))))
+seqlevels(haqers_brain_gr) <- str_remove(seqlevels(haqers_brain_gr),"chr")
+```
+
+
+Intersect with not strict GWAS HAQER SNP
+
+```{r}
+gwas_ld_snp_haqers_df <- as.data.frame(gwas_ld_snp_haqers_gr)
+gwas_ld_snp_haqers_df$CHR_A <- as.factor(gwas_ld_snp_haqers_df$CHR_A)
+
+haqer_snps_not_strict_df <- left_join(gwas_ld_snp_haqers_df,gwas_catalog_snp_gr_df, by = c("CHR_A"="seqnames","BP_A"="start"))
+haqer_snps_not_strict_gr <- makeGRangesFromDataFrame(haqer_snps_not_strict_df,start.field = "start",end.field = "end.x",keep.extra.columns = T)
+
+```
+
+
+```{r}
+
+haqers_brain_gr_snps <- join_overlap_inner(haqers_brain_gr, haqer_snps_not_strict_gr)
+```
+
+```{r}
+sort(table(gwas_catalog_snp[gwas_catalog_snp$SNPS %in% haqers_brain_gr_snps$SNPS ,]$`DISEASE/TRAIT`),decreasing = TRUE)
+
+```
+
+# Try a first pass enrichment analysis 
+
+Null counts
+```{r}
+
+counts_null <- table(gwas_catalog_snp$MAPPED_TRAIT)
+
+```
+
+Test counts
+```{r}
+
+counts_test <- table(gwas_catalog_snp[gwas_catalog_snp$SNPS %in% haqer_snps_not_strict_df$SNPS ,]$MAPPED_TRAIT)
+
+```
+
+Join
+```{r}
+counts_null <- as.data.frame(counts_null)
+colnames(counts_null) <- c("mapped_trait", "counts_null")
+
+counts_test <- as.data.frame(counts_test)
+colnames(counts_test) <- c("mapped_trait", "counts_test")
+
+full_counts <- full_join(counts_null,counts_test, by = "mapped_trait")
+```
+
+
+```{r}
+full_counts$counts_test[is.na(full_counts$counts_test)] <- 0
+full_counts$counts_null[is.na(full_counts$counts_null)] <- 0
+
+```
+
+```{r}
+size_null <- sum(full_counts$counts_null)
+size_test <- sum(full_counts$counts_test)
+
+```
+
+
+```{r}
+full_counts <- full_counts[full_counts$counts_test != 0,]
+
+calc_fisher <- function(count_test, count_null, size_test, size_null){
+  contigency_mats <-
+    matrix(c(count_test,
+             size_test - count_test,
+             count_null,
+             size_null - count_null),
+           nrow = 2,
+           dimnames = list(snps = c("trait", "no_trait"),
+                           traits = c("test", "null")))
+  
+  fishtest_results <- fisher.test(contigency_mats,alternative = "greater")
+  return(fishtest_results$p.value)
+}
+
+calc_fisher(count_test = full_counts$counts_test[3],
+            count_null = full_counts$counts_null[3],
+            size_test, size_null)
+
+full_counts$pval <- map2_dbl(full_counts$counts_test,
+         full_counts$counts_null,
+         calc_fisher,
+         size_test = size_test,
+         size_null = size_null)
+
+full_counts$padj <- p.adjust(full_counts$pval)
+```
+
+```{r}
+full_counts %>%
+  ggplot(aes(pval)) + 
+  geom_histogram()
+
+full_counts %>%
+  ggplot(aes(padj)) + 
+  geom_histogram()
+
+```
+```{r}
+full_counts[full_counts$padj < 0.05,"mapped_trait"]
+```
+
+
+```{r}
+calc_phyper <- function(count_test, count_null, size_test, size_null){
+  
+  return(phyper(   
+    count_test,
+    count_null,
+    size_null - count_null,
+    size_test,
+    lower.tail = FALSE)  )
+}
+
+calc_phyper(count_test = full_counts$counts_test[3],
+            count_null = full_counts$counts_null[3],
+            size_test, size_null)
+
+full_counts$pval_phyper <- map2_dbl(full_counts$counts_test,
+         full_counts$counts_null,
+         calc_phyper,
+         size_test = size_test,
+         size_null = size_null)
+
+full_counts$padj_phyper <- p.adjust(full_counts$pval_phyper)
+
+
+```
+
+```{r}
+full_counts %>%
+  ggplot(aes(pval_phyper)) + 
+  geom_histogram()
+
+full_counts %>%
+  ggplot(aes(padj_phyper)) + 
+  geom_histogram()
+
+```
+```{r}
+full_counts[full_counts$padj_phyper < 0.05,"mapped_trait"]
+```
+
+Review which test to use.
+
+
+# Haqers and TAD boundaries
+
+```{r}
+neuron_boundaries <- rtracklayer::import("~/Downloads/4DNFI2YHK51M.bed.gz")
+seqlevels(neuron_boundaries) <- str_remove(seqlevels(neuron_boundaries),"chr" )
+```
+
+```{r}
+ 
+haqer_boundary_snps <- unique(haqer_snps_not_strict_df[haqer_snps_not_strict_df$name %in% plyranges::join_overlap_inner(haqers, neuron_boundaries)$name.x,"SNPS"])
+```
+```{r}
+gwas_catalog_snp[gwas_catalog_snp$SNPS %in% haqer_boundary_snps ,]
+
+
+haqer_snps_not_strict_df[haqer_snps_not_strict_df$name %in% plyranges::join_overlap_inner(haqers, neuron_boundaries)$name.x,]
+
+haqer_snps_not_strict_neuron_boundary_gr<- plyranges::join_overlap_inner(haqer_snps_not_strict_gr, neuron_boundaries)
+
+left_join(as.data.frame(haqer_snps_not_strict_neuron_boundary_gr), gwas_catalog_snp, by = "SNPS")[7,]
+```
+

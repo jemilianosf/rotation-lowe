@@ -64,7 +64,7 @@ gwas_catalog_snp <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-assoc
 ```{r}
 gwas_catalog_snp %>%
   count(MAPPED_TRAIT,name = "trait_count") %>%
-  top_n(n = 10) %>%
+  top_n(n = 20) %>%
   mutate(MAPPED_TRAIT = fct_reorder(MAPPED_TRAIT,trait_count)) %>%
   ggplot(aes(MAPPED_TRAIT,trait_count, fill = MAPPED_TRAIT)) +
   geom_col() +
@@ -72,10 +72,48 @@ gwas_catalog_snp %>%
   ylab(NULL) +
   theme_minimal() +
   theme(aspect.ratio = 1,legend.position = "none") +
-  scale_fill_brewer(type = "qual",palette = 3)
+  scale_fill_viridis_d(begin= 0.3,end = 0.6) +
+  ylab("Number of SNP associations") +
+  xlab(NULL)
+```
+```{r}
+haqers_olap_pheno_df <- readRDS("../data_output/rds/haqers_olap_pheno_df.Rds")
+
+unique(haqers_olap_pheno_df[,c("name","MAPPED_TRAIT")]) %>%
+  count(MAPPED_TRAIT,name = "trait_count") %>%
+  #top_n(n = 20) %>%
+  mutate(MAPPED_TRAIT = fct_reorder(MAPPED_TRAIT,trait_count)) %>%
+  ggplot(aes(MAPPED_TRAIT,trait_count, fill = MAPPED_TRAIT)) +
+  geom_col() +
+  coord_flip() +
+  ylab(NULL) +
+  theme_minimal() +
+  theme(aspect.ratio = 1,legend.position = "none") +
+  scale_fill_viridis_d(begin= 0.3,end = 0.5,option = "B") +
+  ylab("Number of HAQER associations") +
+  xlab(NULL)
 ```
 
 
+```{r}
+gwas_catalog_snp %>%
+  mutate(DISEASE_TRAIT = `DISEASE/TRAIT`) %>%
+  count(DISEASE_TRAIT,name = "trait_count") %>%
+  top_n(n = 50) %>%
+  mutate(DISEASE_TRAIT = fct_reorder(DISEASE_TRAIT,trait_count)) %>%
+  ggplot(aes(DISEASE_TRAIT,trait_count, fill = DISEASE_TRAIT)) +
+  geom_col() +
+  coord_flip() +
+  ylab(NULL) +
+  theme_minimal() +
+  theme(aspect.ratio = 1,legend.position = "none") +
+  scale_fill_viridis_d()
+```
+How many traits have been mapped to EFO
+```{r}
+summary(is.na(gwas_catalog_snp$`DISEASE/TRAIT`))
+```
+Only 836 are missing
 
 There are multiple ancestries per study!
 ```{r}
@@ -88,7 +126,7 @@ rowSums(table(gwas_catalog_ancestry$`STUDY ACCESSION`,gwas_catalog_ancestry$broa
 
 For now focus on single ancestry studies
 ```{r}
-!duplicated(gwas_catalog_ancestry$`STUDY ACCESSION`,)
+
 
 gwas_catalog_ancestry_nodups <- gwas_catalog_ancestry[!(duplicated(gwas_catalog_ancestry$`STUDY ACCESSION`) | duplicated(gwas_catalog_ancestry$`STUDY ACCESSION`, fromLast = TRUE)),]
 
@@ -140,6 +178,7 @@ seqlevels(haqers) <- str_remove(seqlevels(haqers),"chr")
 haqers$name <- paste0("haqer",1:length(haqers))
 haqers_snp_ancestry <- plyranges::join_overlap_inner_within(gwas_snp_ancestry_granges, haqers)
 ```
+
 ```{r}
 haqers_snp_ancestry %>%
   as.data.frame() %>%
@@ -187,5 +226,113 @@ haqers_dist_to_nearest_snp@elementMetadata$distance %>%
 
 summary(haqers_dist_to_nearest_snp@elementMetadata$distance < 100)
 ```
+
+```{r}
+length(unique(haqers_snp_ancestry$name))
+```
+
+```{r}
+median(colSums(table(haqers_snp_ancestry$SNP_ID_CURRENT,haqers_snp_ancestry$name)))
+```
+```{r}
+haqers_snp_ancestry$DISEASE.TRAIT
+```
+
+
+```{r}
+haqers_snp_ancestry %>%
+  as.data.frame() %>%
+  pull(DISEASE.TRAIT) %>%
+  table() %>%
+  enframe() %>%
+  mutate(name = fct_reorder(name, value)) %>%
+  top_n(20, value) %>%
+  ggplot(aes(value, name)) +
+  geom_col() +
+  theme_light()
+```
+
+```{r}
+haqers_snp_ancestry %>%
+  as.data.frame() %>%
+  pull(DISEASE.TRAIT) %>%
+  table() %>%
+  enframe() %>%
+  mutate(name = fct_reorder(name, value)) %>%
+  ggplot(aes(value, name)) +
+  geom_col() +
+  theme_light()
+```
+
+# Studies table
+
+```{r}
+gwas_studies <- read_tsv("../data_raw/gwas_catalog/gwas-catalog-v1.0.3-studies-r2022-01-12.tsv")
+```
+
+```{r}
+all(is.na(gwas_studies$`SUMMARY STATS LOCATION`))
+```
+
+# Summary statistics info
+
+```{r}
+list_gwas_summary_statistics <- read_csv("../data_raw/gwas_catalog/list_gwas_summary_statistics_28_Jan_2022.csv")
+```
+
+
+```{r}
+sum(gwas_catalog_snp$`STUDY ACCESSION` %in% list_gwas_summary_statistics$`Study accession`) / length(gwas_catalog_snp$`STUDY ACCESSION`)
+```
+Example summary statistics page
+
+```{r}
+GCST001969_EFO_0004326 <- read_tsv("../data_raw/gwas_catalog/23583979-GCST001969-EFO_0004326.h.tsv.gz")
+
+```
+
+```{r}
+GCST001969_EFO_0004326 %>%
+  slice_sample(n = 1e4) %>%
+  ggplot(aes(base_pair_location,- 10 * log10(p_value_gcadj))) +
+    geom_point() +
+    facet_grid(cols = vars(chromosome))
+```
+
+```{r}
+GCST001969_EFO_0004326_gwas_snps <- GCST001969_EFO_0004326[GCST001969_EFO_0004326$hm_rsid %in% gwas_catalog_snp[gwas_catalog_snp$`STUDY ACCESSION` == "GCST001969" & gwas_catalog_snp$CHR_ID == "1",]$SNPS,]
+
+GCST001969_EFO_0004326_ld_snps<- out_ld_df[out_ld_df$CHR_A %in% GCST001969_EFO_0004326_gwas_snps$chromosome &
+out_ld_df$BP_A %in% GCST001969_EFO_0004326_gwas_snps$base_pair_location,]
+
+GCST001969_EFO_0004326_ld_snps_range <- range(GCST001969_EFO_0004326_ld_snps$BP_B)
+
+
+GCST001969_EFO_0004326 %>%
+  filter(chromosome == "1") %>%
+  ggplot(aes(base_pair_location,- 10 * log10(p_value_gcadj))) +
+    geom_point() +
+  geom_point(data = GCST001969_EFO_0004326_gwas_snps,color = "red") +
+  geom_vline(xintercept = GCST001969_EFO_0004326_ld_snps_range[1], color = "darkblue") +
+  geom_vline(xintercept = GCST001969_EFO_0004326_ld_snps_range[2], color = "darkblue") +
+    geom_vline(xintercept = haqers_start_chr1[1], color = "lightblue") +
+  geom_vline(xintercept = haqers_start_chr1[2], color = "lightblue") +
+  xlim(c(205e6,210e6)) 
+  
+
+
+sum(gwas_catalog_snp$`STUDY ACCESSION` == "GCST001969")
+
+
+```
+
+```{r}
+plyranges::join_overlap_left(haqers, GRanges(seqnames = "1",
+        ranges = IRanges(start = GCST001969_EFO_0004326_ld_snps_range[1],end = GCST001969_EFO_0004326_ld_snps_range[2])))
+
+haqers_start_chr1 <- start(haqers[seqnames(haqers)==1])
+haqers_start_chr1 <- haqers_start_chr1[dplyr::between(haqers_start_chr1,left = 205e6,right = 210e6)]
+```
+
 
 

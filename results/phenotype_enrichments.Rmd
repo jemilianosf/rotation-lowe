@@ -1,0 +1,388 @@
+---
+title: "phenotype_enrichments"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(rtracklayer)
+library(plyranges)
+
+options(scipen = 9999)
+```
+
+First pass calculating LD for all chromosomes.
+
+# Read in all LD files
+
+```{r}
+ld_files_list <- list.files("../data_output/plink/gwas_ld_snps_27jan22/",pattern = "ld_snps.ld",full.names = TRUE)
+
+out_ld_df <- do.call(rbind, lapply(ld_files_list, read_table))
+
+gc()
+```
+
+# Filter by R2 > 0.7
+
+Filtering for LD with R2 of at least 0.7
+```{r}
+out_ld_df <- out_ld_df %>%
+  dplyr::filter(R2 >= 0.7)
+
+gc()
+```
+
+# Make GRanges for overlaps
+
+```{r}
+out_ld_gr <- makeGRangesFromDataFrame(df = out_ld_df,
+                         seqnames.field = "CHR_B",
+                         start.field = "BP_B",
+                         end.field = "BP_B",
+                         keep.extra.columns = TRUE)
+```
+
+Read haqers
+```{r }
+haqers <- import.bed("../data_raw/bed/HAQER.bed")
+
+haqers$name <- paste0("haqer",1:length(haqers))
+seqlevels(haqers) <- str_remove(seqlevels(haqers) , "chr")
+
+
+```
+
+
+
+Read random regions
+```{r}
+read_haqers_like_bed <- function(file){
+  haqers <- import.bed(file)
+  haqers$name <- paste0("haqer_rand",1:length(haqers))
+  seqlevels(haqers) <- str_remove(seqlevels(haqers) , "chr")
+  return(haqers)
+}
+
+rand_haqers_list <- lapply(list.files("../data_output/bed/random_beds",full.names = TRUE), read_haqers_like_bed)
+```
+
+
+# Number of overlaps
+
+Overlap haqers and ld gwas snps
+```{r}
+gwas_ld_snp_haqers_gr <- plyranges::join_overlap_inner(haqers,out_ld_gr)
+
+```
+
+Number of haqers that overlap at least one GWAS ld snp
+```{r}
+n_olaps_haqers <- length(unique(gwas_ld_snp_haqers_gr$name))
+```
+
+Overlap random haqers and ld gwas snps
+```{r}
+gwas_ld_snp_random_gr_list <- lapply(rand_haqers_list, plyranges::join_overlap_inner, y = out_ld_gr)
+```
+
+Number of random haqers that overlap at least one GWAS ld snp
+```{r}
+n_rand_olaps <- unlist(lapply(gwas_ld_snp_random_gr_list, function(x) {length(unique(x$name))}))
+```
+
+Histogram of number of random haqers that overlap at least one gwas ld snp 
+```{r}
+n_rand_olaps %>%
+  enframe() %>%
+  ggplot(aes(value)) +
+  geom_histogram(color = "white") +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  geom_vline(xintercept = n_olaps_haqers,color = "red", lty = "dashed")
+```
+
+
+# Enrichment of specific traits
+
+Read gwas catalog information
+```{r}
+gwas_catalog_snp <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+# Change types of some variables to make them compatible with later table join
+gwas_catalog_snp$CHR_POS <- as.numeric(gwas_catalog_snp$CHR_POS)
+gwas_catalog_snp <- gwas_catalog_snp[!is.na(gwas_catalog_snp$CHR_POS),]
+
+
+```
+
+Overlap gwas phenotype info with haqers that overlap a gwas snp, join by coordinate of gwas snp
+
+```{r}
+# Join a GRanges of haqers, with metadata containing the gwas and ld snps they overlap, and a gwas phenotype info table, join by coordinate of gwas snp
+get_overlaps_phenos <- function(haqers_overlaps, gwas_snp_info) {
+  haqers_overlaps <- as.data.frame(haqers_overlaps)
+  haqers_overlaps$CHR_A <- as.character(haqers_overlaps$CHR_A)
+  haqers_overlaps$BP_A <- as.numeric(haqers_overlaps$BP_A)
+  
+  haqers_overlaps_pheno <- left_join(haqers_overlaps,gwas_snp_info, by = c("CHR_A"="CHR_ID", "BP_A"="CHR_POS"))
+  return(haqers_overlaps_pheno)
+}
+
+
+```
+
+```{r}
+# Get the Mapped trait column from the joined haqers - gwas snp - phenotype table, and tabulate the number of haqers associated with each phenotype
+get_haqers_per_pheno <- function(.x,.y) {
+  haqers_per_pheno <- as.data.frame(table(unique(.x[,c("name","MAPPED_TRAIT")])$MAPPED_TRAIT))
+  haqers_per_pheno$n_rand <- .y
+  return(haqers_per_pheno)
+}
+```
+
+
+Join random haqers-snps granges with gwas phenotype info 
+```{r}
+gwas_ld_snp_random_pheno_df_list <- lapply(gwas_ld_snp_random_gr_list,get_overlaps_phenos,gwas_snp_info = gwas_catalog_snp)
+
+```
+
+Get number of haqers per phenotype for each random haqer
+```{r}
+
+names(gwas_ld_snp_random_pheno_df_list) <- paste0("rand_",1:length(gwas_ld_snp_random_pheno_df_list))
+
+haqers_per_pheno_rand_list <- imap(gwas_ld_snp_random_pheno_df_list,get_haqers_per_pheno)
+```
+
+Bind all 
+```{r}
+haqers_per_pheno_rand_df <- do.call(rbind,haqers_per_pheno_rand_list)
+colnames(haqers_per_pheno_rand_df) <- c("mapped_trait","counts","id_rand")
+
+```
+
+Get same info for actual haqers
+
+```{r}
+haqers_olap_pheno_df <- get_overlaps_phenos(gwas_ld_snp_haqers_gr,gwas_catalog_snp)
+haqers_per_pheno_counts <- get_haqers_per_pheno(haqers_olap_pheno_df,"haqers")
+
+colnames(haqers_per_pheno_counts) <- c("mapped_trait","counts","id_haqer")
+haqers_per_pheno_counts <- select(haqers_per_pheno_counts, -id_haqer)
+
+```
+
+Get "p value" per phenotype
+
+```{r}
+# Convert factors to characters for comparison
+haqers_per_pheno_rand_df$mapped_trait <- as.character(haqers_per_pheno_rand_df$mapped_trait)
+haqers_per_pheno_counts$mapped_trait <- as.character(haqers_per_pheno_counts$mapped_trait)
+
+
+
+haqers_per_pheno_counts$pval <- map2_dbl(as.character(haqers_per_pheno_counts$mapped_trait),
+         haqers_per_pheno_counts$counts,
+         get_pheno_pval,
+         random_counts_df = haqers_per_pheno_rand_df)
+
+haqers_per_pheno_counts$fdr <- p.adjust(haqers_per_pheno_counts$pval,method = "fdr")
+```
+
+Distribution of p values
+```{r}
+haqers_per_pheno_counts %>%
+  ggplot(aes(pval)) +
+  geom_histogram()
+```
+Phenotypes
+```{r}
+haqers_per_pheno_counts[haqers_per_pheno_counts$fdr< 0.05,] %>%
+  arrange(pval) 
+```
+
+anti-anoctamin 2 antibody measurement	
+apolipoprotein A 1 measurement	
+binge eating, bipolar disorder	
+C-C motif chemokine 7 measurement	
+C-reactive protein measurement	
+Cystic fibrosis, lung disease severity measurement	
+cytokine measurement	
+diastolic blood pressure, migraine disorder	
+Epstein Barr virus nuclear antigen 1 IgG measurement	
+feeling "fed-up" measurement	
+leukocyte immunoglobulin-like receptor subfamily B member 1 measurement	
+lymphoma	
+multiple sclerosis, oligoclonal band measurement	
+neoplasm of mature B-cells	
+neuroblastoma, cutaneous melanoma	
+remission, hepatitis C virus infection	
+response to interferon beta, anti-drug antibody measurement	
+rheumatoid arthritis, smoking status measurement, ACPA-positive rheumatoid arthritis	
+schizophrenia, bipolar disorder, response to lithium ion	
+susceptibility to pneumonia measurement	
+susceptibility to shingles measurement	
+thyroxine measurement	
+unipolar depression, schizophrenia, sex interaction measurement, bipolar disorder	
+antibody measurement, Epstein-Barr virus infection	
+antinuclear antibody measurement	
+asthma	
+childhood onset asthma	
+Diuretic use measurement	
+Henoch-Schoenlein purpura	
+hypertension	
+ovarian mucinous adenocarcinoma	
+temporal arteritis	
+
+```{r}
+trait <- "unipolar depression, schizophrenia, sex interaction measurement, bipolar disorder"
+
+haqers_per_pheno_rand_df %>%
+  filter(mapped_trait == trait) %>%
+  ggplot(aes(counts)) +
+  geom_histogram() +
+  geom_vline(xintercept = haqers_per_pheno_counts %>%
+               filter(mapped_trait == trait) %>%
+               pull(counts),
+             lty = "dashed",
+             color = "red")
+```
+
+```{r eval = FALSE}
+write_tsv(haqers_per_pheno_counts, "../data_output/tsv/mapped_trait_haqers_pval_1000.tsv")
+
+```
+
+
+
+
+Are the haqers associated with low pvalue phenotypes larger in width
+
+```{r }
+haqers_per_pheno_counts_filtwidth <- read_tsv("../data_output/tsv/mapped_trait_haqers_pval_1000_filtwidth.tsv")
+haqers_per_pheno_counts_filtwidth$fdr <- p.adjust(haqers_per_pheno_counts_filtwidth$pval,method = "fdr")
+```
+
+
+```{r}
+haqers_per_pheno_counts_p05 <- haqers_per_pheno_counts[haqers_per_pheno_counts$fdr < 0.05, ]
+haqers_per_pheno_counts_filtwidth_p05 <- haqers_per_pheno_counts_filtwidth[haqers_per_pheno_counts_filtwidth$fdr < 0.05, ]
+
+
+haqers_per_pheno_counts_p05_filtwidth_intersect <- haqers_per_pheno_counts_p05[haqers_per_pheno_counts_p05$mapped_trait %in% haqers_per_pheno_counts_filtwidth_p05$mapped_trait,] %>%
+  arrange(pval)
+
+haqers_per_pheno_counts_p05_filtwidth_intersect
+```
+
+
+```{r}
+trait <- "asthma"
+
+haqers_per_pheno_rand_df %>%
+  filter(mapped_trait == trait) %>%
+  ggplot(aes(counts)) +
+  geom_histogram() +
+  geom_vline(xintercept = haqers_per_pheno_counts %>%
+               filter(mapped_trait == trait) %>%
+               pull(counts),
+             lty = "dashed",
+             color = "red")
+```
+
+
+# Which haqers, snps studies are associated with enriched traits
+
+unipolar depression, schizophrenia, sex interaction measurement, bipolar disorder	
+```{r}
+
+haqers_olap_pheno_df <- haqers_olap_pheno_df[!is.na(haqers_olap_pheno_df$MAPPED_TRAIT),]
+
+haqers_olap_pheno_df_depression <- haqers_olap_pheno_df[haqers_olap_pheno_df$MAPPED_TRAIT == "unipolar depression, schizophrenia, sex interaction measurement, bipolar disorder",]
+
+
+unique(haqers_olap_pheno_df_depression)
+```
+
+```{r}
+haqers_olap_pheno_df_depression %>%
+  mutate(BP_B = str_split(SNP_B,":") %>% map_chr(2),
+         BP_B = as.numeric(BP_B)) %>%
+  ggplot(aes(BP_B,R2)) +
+  geom_point() +
+  geom_vline(xintercept = unique(haqers_olap_pheno_df_depression$BP_A)) +
+  geom_point(aes(start,1), color = "blue")
+
+unique(haqers_olap_pheno_df_depression$start)
+```
+
+
+
+asthma 
+```{r}
+
+haqers_olap_pheno_df <- haqers_olap_pheno_df[!is.na(haqers_olap_pheno_df$MAPPED_TRAIT),]
+
+haqers_olap_pheno_df_asthma <- haqers_olap_pheno_df[haqers_olap_pheno_df$MAPPED_TRAIT == "asthma",]
+
+```
+
+
+```{r}
+haqers_olap_pheno_df_asthma %>%
+  mutate(BP_B = str_split(SNP_B,":") %>% map_chr(2),
+         BP_B = as.numeric(BP_B)) %>%
+  ggplot(aes(BP_B,R2)) +
+  geom_point() +
+  #geom_vline(xintercept = unique(haqers_olap_pheno_df_asthma$BP_A)) +
+  geom_point(aes(start,1), color = "blue") +
+  facet_wrap(~seqnames)
+```
+
+```{r}
+haqers_olap_pheno_df_list <- map(haqers_per_pheno_counts_p05_filtwidth_intersect$mapped_trait,~haqers_olap_pheno_df[haqers_olap_pheno_df$MAPPED_TRAIT == .x,])
+
+names(haqers_olap_pheno_df_list) <- haqers_per_pheno_counts_p05_filtwidth_intersect$mapped_trait
+```
+multiple sclerosis, oligoclonal band measurement	
+
+
+```{r}
+
+
+haqers_olap_pheno_df_ms <- rbind(haqers_olap_pheno_df_list$`multiple sclerosis, oligoclonal band measurement`,
+haqers_olap_pheno_df_list$`anti-anoctamin 2 antibody measurement`,
+haqers_olap_pheno_df_list$`Epstein Barr virus nuclear antigen 1 IgG measurement`)
+
+haqers_olap_pheno_df_ms
+```
+
+```{r}
+haqers_olap_pheno_df_ms %>%
+  mutate(BP_B = str_split(SNP_B,":") %>% map_chr(2),
+         BP_B = as.numeric(BP_B)) %>%
+  ggplot(aes(BP_B,R2)) +
+  geom_point() +
+  geom_vline(xintercept = unique(haqers_olap_pheno_df_ms$BP_A)) +
+  geom_point(aes(start,1), color = "blue")
+
+min(unique(haqers_olap_pheno_df_ms$start))
+max(unique(haqers_olap_pheno_df_ms$end))
+```
+
+
+
+```{r}
+sort(table(do.call(rbind,haqers_olap_pheno_df_list)$seqname),decreasing = TRUE)
+```
+
+```{r}
+sort(table(seqnames(haqers)),decreasing = TRUE)
+```
+```{r}
+sort(table(gwas_catalog_snp$CHR_ID),decreasing = T)
+```
+

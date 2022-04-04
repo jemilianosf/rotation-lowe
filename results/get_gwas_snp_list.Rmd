@@ -1,0 +1,137 @@
+---
+title: "get_snp_list"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libraries
+```{r}
+library(tidyverse)
+library(rtracklayer)
+library(plyranges)
+
+```
+## GWAS catalog
+
+```{r}
+gwas_catalog_snp <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+gwas_catalog_populations <- read_tsv("../data_raw/gwas_catalog/gwas_catalog-ancestry_r2021-12-21.tsv")
+```
+
+Note: some associations are filtered out here due to them not having an associated snp.
+```{r}
+
+gwas_catalog_snp <- gwas_catalog_snp[!is.na(gwas_catalog_snp$CHR_POS ),]
+
+gwas_catalog_snp$CHR_POS_NUMERIC <- as.numeric(gwas_catalog_snp$CHR_POS)
+
+
+gwas_catalog_snp <- gwas_catalog_snp[!is.na(gwas_catalog_snp$CHR_POS_NUMERIC),]
+```
+
+
+
+Filter by population, get SNPs ascertained in European populations 
+```{r}
+gwas_catalog_populations_european <- gwas_catalog_populations[gwas_catalog_populations$`BROAD ANCESTRAL CATEGORY`=="European",c("STUDY ACCESSION"),]
+gwas_catalog_populations_european <- unique(gwas_catalog_populations_european)
+
+```
+
+```{r}
+gwas_catalog_snp <- gwas_catalog_snp[gwas_catalog_snp$`STUDY ACCESSION` %in% gwas_catalog_populations_european$`STUDY ACCESSION`,]
+```
+
+
+Filter out multi snp records from gwas catalog
+```{r}
+gwas_catalog_snp <- gwas_catalog_snp[!is.na(gwas_catalog_snp$SNP_ID_CURRENT),]
+```
+
+Make granges for overlaps
+```{r}
+gwas_catalog_snp_gr <- makeGRangesFromDataFrame(gwas_catalog_snp,
+                         seqnames.field = "CHR_ID",
+                         start.field = "CHR_POS_NUMERIC",
+                         end.field = "CHR_POS_NUMERIC",
+                         keep.extra.columns = TRUE
+                         )
+```
+
+
+How to handle the fact that there could be different traits associated to the same snp.
+Get a list of unique ranges:
+Keep SNPs column for later join with phenotype info
+```{r}
+gwas_catalog_snp_gr_uq <- gwas_catalog_snp_gr[,"SNPS"]
+gwas_catalog_snp_gr_uq <- unique(gwas_catalog_snp_gr_uq)
+```
+
+```{r}
+saveRDS(object = gwas_catalog_snp_gr_uq,file = "../data_output/gwas_catalog/gwas_catalog_snp_gr_uq.Rds")
+
+gwas_catalog_snp_gr_uq <- readRDS(file = "../data_output/gwas_catalog/gwas_catalog_snp_gr_uq.Rds")
+```
+
+## 1000 genomes
+
+Cut vcf to only read first three columns
+```{bash eval = F}
+gzip -cd ../data_raw/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.vcf.gz |grep -v '^##'| cut -f1-3 > ../data_output/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.snp_id.txt
+```
+
+```{r }
+chr22_phased_highcov_phase3 <- read_table("../data_output/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.snp_id.txt")
+```
+
+```{r}
+chr22_phased_highcov_phase3_gr <- makeGRangesFromDataFrame(chr22_phased_highcov_phase3,
+                         seqnames.field = "#CHROM",
+                         start.field = "POS",
+                         end.field = "POS",keep.extra.columns = T)
+
+seqlevels(chr22_phased_highcov_phase3_gr) <- str_remove(seqlevels(chr22_phased_highcov_phase3_gr),"chr")
+```
+
+Some variants in 1000 genomes VCF are duplicated
+```{r}
+table(duplicated(chr22_phased_highcov_phase3_gr))
+```
+
+Exploring more of the duplicates
+
+They seem to be due to the original VCF file reporting different variants in duplicate ranges, so for now I will skip these but might be a good idea to look more into this later on.
+
+```{r}
+chr22_phased_highcov_phase3_gr[duplicated(chr22_phased_highcov_phase3_gr) | duplicated(chr22_phased_highcov_phase3_gr,fromLast = TRUE)]
+```
+
+```{r}
+chr22_phased_highcov_phase3_gr <- unique(chr22_phased_highcov_phase3_gr)
+
+```
+
+
+# Get overlaping variants from GWAS catalog in the vcf and get a list of variant ids
+
+Not all match a variant in the vcf file, but most do
+```{r}
+distonear_gwascat_chr22 <- distanceToNearest(gwas_catalog_snp_gr_chr22_uq, chr22_phased_highcov_phase3_gr)
+table(distonear_gwascat_chr22@elementMetadata$distance == 0)
+```
+
+
+Join overlapping ranges 
+There is a 1-1 match between gwas snps and 1000 genomes vcf 
+```{r}
+gwas_100genomes_join <- plyranges::join_overlap_left(gwas_catalog_snp_gr_chr22_uq, chr22_phased_highcov_phase3_gr)
+
+```
+
+Print list to file to use as snpid in plink ld calculation
+```{r eval = FALSE}
+writeLines(gwas_100genomes_join$ID, "../data_output/plink/ld_gwas_1000genomesid_european_chr22.txt")
+```

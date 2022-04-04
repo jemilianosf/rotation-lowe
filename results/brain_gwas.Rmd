@@ -1,0 +1,74 @@
+---
+title: "brain_gwas"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Notes for brain gwas overlaps
+
+Overlap variants from with haqers:
+Makowski et al 2022: Discovery of genomic loci of the human cerebral cortex using genetically informed brain atlases
+ 
+Notes from the text
+- They used snps in ld to assign snps to genes: All SNPs in LD (R2 > 0.6) with the 393 regional variants were mapped to genes using posi-
+
+
+## Exploration of variants
+
+```{r}
+brain_gwas_snp_stats <- read.table("../data_raw/brain_gwas/makowski2022/S2-Table 1.csv",skip = 1,header = T,sep = ",")
+
+```
+
+First question:
+
+Are any of these SNPs already in the GWAS catalog. If so, I have made the overlaps already.
+
+```{r}
+library(tidyverse)
+gwas_catalog_snps <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+
+length(unique(gwas_catalog_snps$MAPPED_TRAIT))
+
+nrow(gwas_catalog_snps[,c("SNPS","MAPPED_TRAIT")])
+nrow(unique(gwas_catalog_snps[,c("SNPS","MAPPED_TRAIT")]))
+
+```
+
+```{r}
+n_brain_and_gwas_catalog <- sum(unique(brain_gwas_snp_stats$SNP) %in% unique(gwas_catalog_snps$SNPS))
+```
+
+Second question: 
+
+Is any of the brain gwas snps in the gwas catalog snps that are already overlapped to haqers?
+```{r}
+haqers_olap_pheno_df <- readRDS("../data_output/rds/haqers_olap_pheno_df.Rds")
+
+n_haqer_brain_overlaps <- sum(unique(haqers_olap_pheno_df$SNPS) %in% unique(brain_gwas_snp_stats$SNP))
+```
+
+
+```{r}
+gwas_ld_snp_random_pheno_df_list <- readRDS("../data_output/rds/gwas_ld_snp_random_pheno_df_list.Rds")
+
+```
+
+```{r}
+n_random_brain_overlaps <- unlist(lapply(gwas_ld_snp_random_pheno_df_list, function(x) sum(unique(x$SNPS) %in% unique(brain_gwas_snp_stats$SNP))))
+
+```
+
+```{r}
+enframe(n_random_brain_overlaps) %>%
+  ggplot(aes(value)) +
+  geom_histogram() +
+  geom_vline(xintercept = n_haqer_brain_overlaps, lty = "dashed", color = "red")
+```
+```{r}
+( sum( n_random_brain_overlaps >= n_haqer_brain_overlaps) + 1 ) / 1001
+```
+

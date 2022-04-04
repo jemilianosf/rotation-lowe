@@ -1,0 +1,517 @@
+---
+title: "bedenrichment_explore_output"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Read tables of results
+```{r}
+enrich_results <- list.files("../data_output/tsv/",pattern = "bedEnrich_exact.tsv",full.names = TRUE)
+names(enrich_results) <- str_remove(basename(enrich_results),".tsv")
+
+enrich_results_list <- map(enrich_results, read_tsv)
+
+enrich_results_list <- map(enrich_results_list, function(.x){
+  .x$Filename1 <- basename(.x$Filename1)
+  .x$Filename1 <- str_remove(.x$Filename1,".bed")
+  return(.x)
+})
+
+names(enrich_results_list)
+```
+
+
+# Read tables of id mappings
+```{r}
+id_mappings <- list.files("../data_output/tsv", pattern = "traits.tsv", full.names = T)
+id_mappings_list <- map(id_mappings, read_tsv)
+
+names(id_mappings_list) <- str_remove(basename(id_mappings),".tsv")
+
+colnames(id_mappings_list$traits_efo_traits) <- c("DISEASE_NAME","DISEASE_ID")
+```
+
+
+# Map EFO to readable traits
+```{r}
+trait_id2name <- function(trait_id, id2name_table) {
+  id2name_table <- unique(id2name_table[,c("DISEASE_ID","DISEASE_NAME")])
+  if(!trait_id %in% id2name_table$DISEASE_ID) return(trait_id)
+  trait_name <- id2name_table$DISEASE_NAME[id2name_table$DISEASE_ID == trait_id]
+  return(trait_name)
+}
+
+trait_ids2names <- function(trait_ids, id2name_table){
+  trait_names <- map_chr(str_split(trait_ids,"-")[[1]],trait_id2name, id2name_table = id2name_table)
+  trait_names <- paste0(trait_names,collapse = ", ")
+  return(trait_names)
+}
+
+trait_ids2names_mutate_df <- function(traits_df, mappings_df) {
+  traits_df <- mutate(traits_df,
+                      MAPPED_TRAIT = map_chr(Filename1,
+                                             trait_ids2names,
+                                             id2name_table = mappings_df))
+  return(traits_df)
+}
+
+```
+
+
+```{r}
+enrich_results_annotated_list <- map2(enrich_results_list, id_mappings_list, trait_ids2names_mutate_df)
+```
+
+
+
+
+# Add fdr
+```{r}
+enrich_results_annotated_list <- map(enrich_results_annotated_list, function(.x) {
+  .x$padj <- p.adjust(.x$pValue, "fdr")
+  return(.x)
+})
+```
+
+
+# Plots
+```{r}
+enrich_plot <- function(traits_df) {
+  p <- arrange(traits_df[,c("MAPPED_TRAIT","LenElements1","LenElements2","OverlapCount","ExpectedOverlap","Enrichment","pValue","padj")],OverlapCount) %>%
+    filter(padj < 0.05) %>%
+    mutate(MAPPED_TRAIT = fct_reorder(MAPPED_TRAIT,- log10(padj))) %>%
+    ggplot(aes(- log10(padj), MAPPED_TRAIT, size = OverlapCount, color = log2(Enrichment ))) +
+    geom_point() +
+    theme_minimal() +
+    scale_color_viridis_c(option = "A",begin=0.2) + 
+    ylab(NULL)
+  plot(p)
+}
+
+
+```
+
+# Traits
+```{r}
+enrich_plot(enrich_results_annotated_list$efo_mapped_traits_haqerv1_bedEnrich_exact)
+
+```
+Volcano
+```{r}
+enrich_results_annotated_list$efo_mapped_traits_haqerv1_bedEnrich_exact %>%
+  ggplot(aes(log2(Enrichment), -log10(padj))) +
+  geom_point() +
+  geom_hline(yintercept = -log10(0.05))
+```
+
+# Disease
+```{r}
+enrich_plot(enrich_results_annotated_list$efo_mapped_disease_haqerv1_bedEnrich_exact)
+
+```
+# Disease children
+```{r}
+enrich_plot(enrich_results_annotated_list$efo_mapped_disease_children_haqerv1_bedEnrich_exact)
+```
+# Disease children 2
+```{r}
+enrich_plot(enrich_results_annotated_list$efo_mapped_disease_children2_haqerv1_bedEnrich_exact)
+```
+
+Separate by category
+
+Doesn't work because 1-many relationship
+```{r}
+disease2 <- enrich_results_annotated_list$efo_mapped_disease_children2_haqerv1_bedEnrich_exact
+
+disease_mappings <- left_join(id_mappings_list$disease_children2_efo_traits, id_mappings_list$disease_efo_traits, by = c("MAPPED_TRAIT","MAPPED_TRAIT_URI"))
+
+left_join(disease2,disease_mappings, by = c("Filename1"="DISEASE_ID.x"))
+```
+
+
+# Phenotypes
+```{r}
+enrich_plot(enrich_results_annotated_list$efo_mapped_phenotype_haqerv1_bedEnrich_exact)
+```
+# Phenotypes
+```{r}
+enrich_plot(enrich_results_annotated_list$efo_mapped_phenotype_abnormality_haqerv1_bedEnrich_exact)
+
+```
+
+```{r}
+mapped_trait_haqers_pval_1000 <- read_tsv("../data_output/tsv/mapped_trait_haqers_pval_1000.tsv")
+
+mapped_trait_haqers_pval_1000$padj <- p.adjust(mapped_trait_haqers_pval_1000$pval,"fdr",n = 3700)
+mapped_trait_haqers_pval_1000$padj_prev <- p.adjust(mapped_trait_haqers_pval_1000$pval,"fdr")
+```
+
+```{r}
+mapped_trait_haqers_pval_1000[mapped_trait_haqers_pval_1000$padj_prev < 0.05,] %>%
+  mutate(MAPPED_TRAIT = fct_reorder(mapped_trait,counts)) %>%
+  ggplot(aes(counts, MAPPED_TRAIT, fill = counts )) +
+  geom_col() +
+  theme_minimal() +
+  scale_fill_viridis_c(option = "A",begin=0.3,end=0.6) + 
+  ylab(NULL)
+
+
+```
+
+
+
+# Plots for presentation
+```{r}
+
+
+
+trait_results_df <- enrich_results_list$efo_mapped_traits_haqerv1_bedEnrich_exact
+
+trait_results_df <- trait_results_df %>%
+  mutate(MAPPED_TRAIT =map_chr(enrich_results_list$efo_mapped_traits_haqerv1_bedEnrich_exact$Filename1,
+        trait_ids2names,
+        id2name_table = id_mappings_list$traits_efo_traits))
+
+```
+
+```{r}
+trait_results_df$padjust <- p.adjust(trait_results_df$pValue,"fdr")
+
+#trait_results_df <- trait_results_df[trait_results_df$padjust < 0.05, ]
+
+arrange(trait_results_df[,c("MAPPED_TRAIT","LenElements1","LenElements2","OverlapCount","ExpectedOverlap","Enrichment","pValue","padjust")],OverlapCount) %>%
+  mutate(MAPPED_TRAIT = fct_reorder(MAPPED_TRAIT,- 10 * log10(pValue))) %>%
+  ggplot(aes(- 10 * log10(pValue), MAPPED_TRAIT, size = OverlapCount, color = Enrichment )) +
+  geom_point() +
+  theme_minimal() +
+  scale_color_viridis_c(option = "A",begin=0.2) + 
+  ylab(NULL)
+
+```
+
+```{r}
+arrange(trait_results_df[,c("MAPPED_TRAIT","LenElements1","LenElements2","OverlapCount","ExpectedOverlap","Enrichment","pValue","padjust")],OverlapCount) %>%
+  filter(OverlapCount > 0) %>%
+  mutate(MAPPED_TRAIT = fct_reorder(MAPPED_TRAIT,- 10 * log10(pValue))) %>%
+  ggplot(aes( MAPPED_TRAIT,- 10 * log10(pValue), size = OverlapCount, color = log2(Enrichment) )) +
+  geom_point() +
+  scale_color_viridis_c(option = "A") + 
+  theme(axis.text.x = element_blank())
+```
+
+
+
+```{r}
+mapped_trait_haqers_pval_1000[mapped_trait_haqers_pval_1000$padj_prev < 0.05,] %>%
+  mutate(MAPPED_TRAIT = fct_reorder(mapped_trait,counts)) %>%
+  ggplot(aes(counts, MAPPED_TRAIT, fill = counts )) +
+  geom_col() +
+  theme_minimal() +
+  scale_fill_viridis_c(option = "A",begin=0.3,end=0.6) + 
+  ylab(NULL)
+
+
+```
+
+
+
+```{r}
+efo_id2name <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+efo_id2name <- efo_id2name[c("MAPPED_TRAIT","MAPPED_TRAIT_URI")]
+efo_id2name <- unique(efo_id2name)
+
+efo_id2name <- efo_id2name[!is.na(efo_id2name$MAPPED_TRAIT_URI),]
+efo_id2name <- efo_id2name[!str_detect(efo_id2name$MAPPED_TRAIT_URI,","),]
+
+efo_id2name$MAPPED_TRAIT_URI <- basename(efo_id2name$MAPPED_TRAIT_URI)
+
+
+
+```
+
+```{r}
+haqer_efo_enrich <- left_join(haqer_efo_enrich, efo_id2name,by = c("Filename1" = "MAPPED_TRAIT_URI"))
+haqer_efo_enrich$fdr <- p.adjust(haqer_efo_enrich$pValue,"fdr")
+
+arrange(haqer_efo_enrich[haqer_efo_enrich$pValue * 2500 < 0.05,],fdr)
+```
+```{r}
+summary(haqer_efo_enrich$LenElements1 > 00000)
+```
+
+
+```{r}
+haqer_efo_enrich[haqer_efo_enrich$MAPPED_TRAIT == "asthma",,na.rm =T]
+```
+
+```{r}
+haqer_efo_enrich[haqer_efo_enrich$MAPPED_TRAIT == "hypertension",,na.rm =T]
+```
+
+```{r}
+haqer_efo_enrich[haqer_efo_enrich$pValue > 1,]
+```
+
+```{r}
+haqer_efo_enrich %>%
+  filter(pValue < 1) %>%
+  ggplot(aes(pValue )) +
+  geom_histogram()
+```
+
+
+```{r}
+haqer_efo_enrich %>%
+  ggplot(aes(Enrichment,pValue )) +
+  geom_point() +
+  scale_x_log10() 
+
+
+
+
+haqer_efo_enrich %>%
+  filter(Enrichment > 0 & Enrichment < 50, LenElements1 > 10) %>%
+  ggplot(aes(Enrichment)) +
+  geom_histogram() 
+
+haqer_efo_enrich %>%
+  filter(LenElements1 < 30) %>%
+  ggplot(aes(LenElements1, Enrichment, color = fdr < 0.05)) +
+  geom_point()
+
+summary(haqer_efo_enrich$LenElements1)
+
+
+
+```
+```{r}
+haqer_efo_enrich %>%
+  ggplot(aes(pValue > 1, LenElements1)) +
+  geom_boxplot() +
+  scale_y_log10()
+```
+```{r}
+haqer_efo_enrich[haqer_efo_enrich$pValue > 17,]
+
+haqer_efo_enrich[haqer_efo_enrich$LenElements1 == max(haqer_efo_enrich$LenElements1),]
+```
+```{r}
+haqers_olap_pheno_df <-readRDS("../data_output/rds/haqers_olap_pheno_df.Rds")
+haqers_olap_pheno_df <- haqers_olap_pheno_df[!is.na(haqers_olap_pheno_df$MAPPED_TRAIT),]
+
+haqers_olap_pheno_df <- haqers_olap_pheno_df[haqers_olap_pheno_df$MAPPED_TRAIT == "hypertension",]
+unique(haqers_olap_pheno_df$name)
+```
+
+
+# Output disease enrichments
+
+```{r}
+efo_mapped_disease_haqerv1_bedEnrich_exact <- read.delim("../data_output/tsv/efo_mapped_disease_haqerv1_bedEnrich_exact.tsv")
+efo_mapped_disease_haqerv1_bedEnrich_normalApproximate <- read.delim("../data_output/tsv/efo_mapped_disease_haqerv1_bedEnrich_normalApproximate.tsv")
+
+
+efo_mapped_traits_haqerv1_bedEnrich_exact <- read.delim("../data_output/tsv/efo_mapped_traits_haqerv1_bedEnrich_exact.tsv")
+efo_mapped_traits_haqerv1_bedEnrich_normalApproximate <- read.delim("../data_output/tsv/efo_mapped_traits_haqerv1_bedEnrich_normalApproximate.tsv")
+
+
+```
+
+```{r}
+both_trials_disease <- left_join(efo_mapped_disease_haqerv1_bedEnrich_exact,efo_mapped_disease_haqerv1_bedEnrich_normalApproximate,by = c("Filename1"  ,     "Filename2"  ,     "LenElements1"  ,  "LenElements2"))
+
+both_trials_traits <- left_join(efo_mapped_traits_haqerv1_bedEnrich_exact,efo_mapped_traits_haqerv1_bedEnrich_normalApproximate,by = c("Filename1"  ,     "Filename2"  ,     "LenElements1"  ,  "LenElements2"))
+
+```
+
+```{r}
+both_trials_disease %>%
+  ggplot(aes(pValue.x,pValue.y)) +
+  geom_point() +
+  geom_abline()
+  
+```
+```{r}
+both_trials_traits %>%
+  ggplot(aes(pValue.x,pValue.y)) +
+  geom_point() +
+  geom_abline()
+  
+```
+
+```{r}
+efo_mapped_disease_haqerv1_bedEnrich_exact %>%
+  ggplot(aes(pValue)) +
+  geom_histogram()
+```
+```{r}
+efo_mapped_traits_haqerv1_bedEnrich_exact %>%
+  filter(pValue < 1) %>%
+  ggplot(aes(pValue)) +
+  geom_histogram()
+```
+
+```{r}
+efo_mapped_traits_haqerv1_bedEnrich_exact$fdr <- p.adjust(efo_mapped_traits_haqerv1_bedEnrich_exact$pValue,method = "fdr")
+
+```
+
+```{r}
+arrange(efo_mapped_traits_haqerv1_bedEnrich_exact[efo_mapped_traits_haqerv1_bedEnrich_exact$fdr < 0.05,],desc(OverlapCount))
+```
+```{r}
+arrange(efo_mapped_traits_haqerv1_bedEnrich_exact[efo_mapped_traits_haqerv1_bedEnrich_exact$pValue * 2500 < 0.05,],desc(OverlapCount))
+```
+
+
+```{r}
+efo_mapped_disease_haqerv1_bedEnrich_exact[efo_mapped_disease_haqerv1_bedEnrich_exact$pValue * nrow(efo_mapped_disease_haqerv1_bedEnrich_exact) < 0.05,] 
+
+efo_mapped_disease_haqerv1_bedEnrich_exact$padj <- p.adjust(efo_mapped_disease_haqerv1_bedEnrich_exact$pValue,"fdr")
+
+
+efo_mapped_disease_haqerv1_bedEnrich_exact[efo_mapped_disease_haqerv1_bedEnrich_exact$padj < 0.05,] 
+
+```
+
+# Child 2
+```{r}
+efo_mapped_disease_children2 <- read.delim("../data_output/tsv/efo_mapped_disease_children2_haqerv1_bedEnrich_exact.tsv")
+
+efo_mapped_disease_children2[efo_mapped_disease_children2$pValue * 563 < 0.05,]
+
+efo_mapped_disease_children2[p.adjust(efo_mapped_disease_children2$pValue, "fdr") < 0.05,]
+```
+
+```{r}
+efo_mapped_disease_children <- read.delim("../data_output/tsv/efo_mapped_disease_children_haqerv1_bedEnrich_exact.tsv")
+
+efo_mapped_disease_children[efo_mapped_disease_children$pValue * 277 < 0.05,]
+
+```
+
+
+```{r}
+efo_mapped_disease <- read.delim("../data_output/tsv/efo_mapped_disease_haqerv1_bedEnrich_exact.tsv")
+
+efo_mapped_disease[efo_mapped_disease$pValue * 28 < 0.05,]
+
+```
+
+
+Get the schizophrenia haqer
+```{r}
+haqers_olap_pheno_df <- readRDS("../data_output/rds/haqers_olap_pheno_df.Rds")
+
+haqer_schiz_df <- haqers_olap_pheno_df[haqers_olap_pheno_df$MAPPED_TRAIT == "unipolar depression, schizophrenia, sex interaction measurement, bipolar disorder",] %>%
+  drop_na(name)
+
+haqer_asthma_df <- haqers_olap_pheno_df[haqers_olap_pheno_df$MAPPED_TRAIT == "asthma",] %>%
+  drop_na(name)
+```
+
+
+```{r}
+ld_files_list <- list.files("../data_output/plink/gwas_ld_snps_27jan22/",pattern = "ld_snps.ld",full.names = TRUE)
+ld_files_list <- ld_files_list[3]
+out_ld_df <- do.call(rbind, lapply(ld_files_list, read_table))
+
+
+```
+
+```{r}
+bp_a_pos <- 49681564
+out_ld_df %>%
+  filter(SNP_A == unique(haqer_schiz_df$SNP_A)) %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+    geom_vline(xintercept = unique(haqer_schiz_df$start) / 1e6, col = "lightblue") +
+  geom_point(size = 0.3,color = "gray") +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  theme(aspect.ratio = 1)
+```
+```{r}
+haqer_asthma_df
+```
+```{r}
+ld_files_list <- list.files("../data_output/plink/gwas_ld_snps_27jan22/",pattern = "ld_snps.ld",full.names = TRUE)
+ld_files_list <- ld_files_list[map_int(paste0("chr",unique(as.character(haqer_asthma_df$seqnames))),~ which(str_detect(pattern = .x,string = ld_files_list)))]
+
+out_ld_df <- do.call(rbind, lapply(ld_files_list, read_table))
+
+
+
+```
+
+
+```{r}
+
+chrs <- haqer_asthma_df$SNP_A %>%
+  str_split(":") %>%
+  map_chr(1)
+starts <- haqer_asthma_df$SNP_A %>%
+  str_split(":") %>%
+  map_chr(2)
+
+unique_starts <- unique(data.frame(chrs,starts))[c(1,2,3,9,10,17),]
+
+haqer_asthma_df_example <- haqer_asthma_df %>%
+  filter(CHR_A %in% unique_starts$chrs, 
+         BP_A %in% unique_starts$starts) %>%
+  select(seqnames,start,end,BP_A,SNP_A,name) %>%
+  unique()
+```
+
+```{r}
+
+haqer_asthma_df_example
+```
+```{r}
+haqer_asthma_df[haqer_asthma_df$SNPS == "rs60156285",]
+
+between(132620126, 132619404,	132620313	)
+
+
+
+
+132620126
+haqer_asthma_df_example
+```
+
+
+```{r}
+p <- list()
+for (i in 1:nrow(haqer_asthma_df_example)){
+  row_haqer <- haqer_asthma_df_example[i,]
+  
+  p[[i]] <- out_ld_df %>%
+    filter(SNP_A == row_haqer$SNP_A) %>%
+    ggplot(aes(BP_B / 1e6, R2)) +
+    geom_vline(xintercept = row_haqer$start / 1e6, col = "lightblue") +
+    geom_vline(xintercept = row_haqer$end / 1e6, col = "lightblue") +
+    geom_point(color = "gray",size = 0.3) +
+    geom_vline(xintercept =row_haqer$BP_A / 1e6)  +
+    geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+    theme_light() +
+    xlab("Position (Mb)") +
+    ggtitle(paste0("chr",row_haqer$seqnames)) +
+    theme(aspect.ratio = 1)
+  
+}
+
+```
+
+
+```{r}
+library(patchwork)
+( p[[1]] | p[[6]] ) / ( p[[3]] |p[[4]] ) 
+length(p)
+```
+

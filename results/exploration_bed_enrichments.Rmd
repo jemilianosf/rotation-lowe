@@ -1,0 +1,414 @@
+---
+title: "explorations_bedenrichments"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Figure out inputs
+
+```{bash}
+bedEnrichments  
+
+mapped_traits_dir=../data_output/bed/test_traits
+elements2=../data_raw/bed/HAQER.bed
+nogap=../data_raw/bed/hg38.simple.noGap.bed
+out=../data_output/tsv/bedenrichments_haqers_schizophreniasnps.txt   
+
+tmpfile=$(mktemp)
+
+echo -e "#Method\tFilename1\tFilename2\tLenElements1\tLenElements2\tOverlapCount\tDebugCheck\tExpectedOverlap\tEnrichment\tpValue" > $out
+
+for elements1 in $(ls ${mapped_traits_dir});
+do
+  bedEnrichments exact ${mapped_traits_dir}/$elements1 $elements2 $nogap $tmpfile
+  grep -v '^#' $tmpfile >> $out
+done
+
+awk '{trait=$2; gsub(/bed/,"",trait); print trait}' $tmpfile
+
+mapped-trait
+```
+```{bash}
+
+bedEnrichments exact EFO_0000589.bed ../../../data_raw/bed/HAQER.bed ../../../data_raw/bed/hg38.simple.noGap.bed /dev/stdout 
+
+```
+
+# Other one 
+
+get_gwas_snps_trait.R
+```{r}
+gwas_catalog_snp <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+
+gwas_catalog_snp <- unique(gwas_catalog_snp[,c("CHR_ID","CHR_POS","MAPPED_TRAIT_URI")])
+
+gwas_catalog_snp <- drop_na(gwas_catalog_snp)
+
+gwas_catalog_snp <- gwas_catalog_snp[!str_detect(gwas_catalog_snp$CHR_ID,"x"),]
+gwas_catalog_snp <- gwas_catalog_snp[!str_detect(gwas_catalog_snp$CHR_ID,";"),]
+
+gwas_catalog_snp$CHR_ID<- paste0("chr",gwas_catalog_snp$CHR_ID)
+
+gwas_catalog_snp$MAPPED_TRAIT_URI <- map_chr(str_split(gwas_catalog_snp$MAPPED_TRAIT_URI,", "),
+    function(.x){
+      .x <- basename(.x)
+      if(length(.x)>1){
+        .x <- paste(.x,collapse = "-")
+      }
+      return(.x)
+    })
+
+write_tsv(gwas_catalog_snp,"../data_output/gwas_catalog/gwas_snps_trait.tsv",col_names = FALSE)
+
+
+```
+
+Write file for EFO disease
+```{r}
+library(ontologyIndex)
+library(tidyverse)
+
+gwas_assoc <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+gwas_assoc <- gwas_assoc[,c("MAPPED_TRAIT","MAPPED_TRAIT_URI")]
+gwas_assoc <- unique(gwas_assoc)
+
+gwas_assoc <- gwas_assoc %>%
+  mutate(ct_trait=str_count(MAPPED_TRAIT ,","),
+         ct_uri=str_count(MAPPED_TRAIT_URI , ",")) %>%
+  filter(ct_trait == ct_uri)
+
+gwas_assoc_trait <- gwas_assoc %>%
+  select(MAPPED_TRAIT) %>%
+  separate_rows(MAPPED_TRAIT,sep = ", ")
+
+gwas_assoc_uri <- gwas_assoc %>%
+  select(MAPPED_TRAIT_URI) %>%
+  separate_rows(MAPPED_TRAIT_URI,sep = ", ")
+
+gwas_assoc <- cbind(gwas_assoc_trait,gwas_assoc_uri)
+
+gwas_assoc$MAPPED_TRAIT_URI <- basename(gwas_assoc$MAPPED_TRAIT_URI)
+gwas_assoc <- unique(gwas_assoc)
+
+write_tsv(gwas_assoc,"../data_output/tsv/traits_efo_traits.tsv")
+
+
+```
+
+```{r}
+efo <- get_ontology("../data_raw/obo/efo.obo")
+
+gwas_assoc <- gwas_assoc[gwas_assoc$MAPPED_TRAIT %in% efo$name , ]
+
+```
+
+
+```{r}
+
+efo_trait2higher <- function(trait, higher_term = "disease", efo, nchild = 1) {
+  
+  higher_uri <- names(efo$name[efo$name == higher_term][1])
+
+  # Gets the name of a trait in efo, and maps it to a higher level term under a category
+  
+  if(!trait %in% efo$name) return(tibble("id" = NA,"name" = NA, "trait" = trait))
+  
+  # Get uri in efo
+  trait_uri <- names(efo$name[efo$name==trait])[1]
+  if(is.na(trait_uri)) return(tibble("id" = NA,"name" = NA, "trait" = trait))
+  
+  # Is disease in trait ancestors?
+  ## Get ancestors
+  trait_ancestors <- get_term_property(ontology = efo,term = trait_uri, property_name = "ancestors", as_names = TRUE)
+  ## If diesase not in ancestors, drop trait
+  if(!higher_term %in% trait_ancestors) return(tibble("id" = NA,"name" = NA, "trait" = trait))
+  ## Get disease child
+  higher_uri_children <- higher_uri
+  for(i in 1:nchild){
+    higher_uri_children <- unname(unlist(efo$children[higher_uri_children]))
+    higher_uri_children <- unique(higher_uri_children)
+  }
+  if(length(higher_uri_children) == 0) return(tibble("id" = NA,"name" = NA, "trait" = trait))
+  higher_traits <- trait_ancestors[names(trait_ancestors) %in% higher_uri_children]
+  
+  higher_traits_df <- enframe(higher_traits,name = "id",value="name")
+  higher_traits_df$trait <- trait
+  
+  return(higher_traits_df)
+}
+
+```
+
+```{r}
+efo_phenotypes_child_df <- do.call(rbind,lapply(gwas_assoc$MAPPED_TRAIT,efo_trait2higher,higher_term = "phenotype",efo = efo,nchild = 1))
+efo_phenotypes_child_df <- drop_na(efo_phenotypes_child_df)
+
+efo_phenotypes_child_df <- left_join(gwas_assoc,efo_phenotypes_child_df, by = c("MAPPED_TRAIT"="trait"))
+
+efo_phenotypes_child_df <- drop_na(efo_phenotypes_child_df)
+
+colnames(efo_phenotypes_child_df) <- c(c("MAPPED_TRAIT","MAPPED_TRAIT_URI","DISEASE_ID","DISEASE_NAME"))
+
+write_tsv(efo_phenotypes_child_df,"../data_output/tsv/phenotypes_children_efo_traits.tsv")
+```
+
+```{r}
+gwas_catalog_snp <- read.delim("../data_output/gwas_catalog/gwas_snps_trait.tsv",header = F)
+
+gwas_catalog_snp <- gwas_catalog_snp %>%
+  separate_rows(V3, sep = "-")
+
+snp_efo_id <- left_join(gwas_catalog_snp,efo_phenotypes_child_df,by = c("V3"="MAPPED_TRAIT_URI"))
+
+snp_efo_id <- drop_na(snp_efo_id)
+
+snp_efo_id <- snp_efo_id[,c("V1","V2","DISEASE_ID")]
+
+snp_efo_id <- unique(snp_efo_id)
+
+write_tsv(snp_efo_id,"../data_output/gwas_catalog/gwas_snps_phenotype_children.tsv",col_names = F)
+
+```
+
+
+```{r}
+efo_phenotype_abnormality_child_df <- do.call(rbind,lapply(gwas_assoc$MAPPED_TRAIT,efo_trait2higher,higher_term = "Phenotypic abnormality",efo = efo,nchild = 1))
+efo_phenotype_abnormality_child_df <- drop_na(efo_phenotype_abnormality_child_df)
+
+efo_phenotype_abnormality_child_df <- left_join(gwas_assoc,efo_phenotype_abnormality_child_df, by = c("MAPPED_TRAIT"="trait"))
+
+efo_phenotype_abnormality_child_df <- drop_na(efo_phenotype_abnormality_child_df)
+
+colnames(efo_phenotype_abnormality_child_df) <- c(c("MAPPED_TRAIT","MAPPED_TRAIT_URI","DISEASE_ID","DISEASE_NAME"))
+
+write_tsv(efo_phenotype_abnormality_child_df,"../data_output/tsv/phenotypic_abnormality_children_efo_traits.tsv")
+```
+
+```{r}
+gwas_catalog_snp <- read.delim("../data_output/gwas_catalog/gwas_snps_trait.tsv",header = F)
+
+gwas_catalog_snp <- gwas_catalog_snp %>%
+  separate_rows(V3, sep = "-")
+
+snp_efo_id <- left_join(gwas_catalog_snp,efo_phenotype_abnormality_child_df,by = c("V3"="MAPPED_TRAIT_URI"))
+
+snp_efo_id <- drop_na(snp_efo_id)
+
+snp_efo_id <- snp_efo_id[,c("V1","V2","DISEASE_ID")]
+
+snp_efo_id <- unique(snp_efo_id)
+
+write_tsv(snp_efo_id,"../data_output/gwas_catalog/gwas_snps_phenotypic_abnormality_children.tsv",col_names = F)
+```
+
+```{r}
+efo_disease_df <- do.call(rbind,lapply(gwas_assoc$MAPPED_TRAIT,efo_trait2higher,efo = efo))
+efo_disease_df <- drop_na(efo_disease_df)
+
+efo_disease_df <- left_join(gwas_assoc,efo_disease_df, by = c("MAPPED_TRAIT"="trait"))
+
+efo_disease_df <- drop_na(efo_disease_df)
+
+colnames(efo_disease_df) <- c(c("MAPPED_TRAIT","MAPPED_TRAIT_URI","DISEASE_ID","DISEASE_NAME"))
+
+write_tsv(efo_disease_df,"../data_output/tsv/disease_efo_traits.tsv")
+```
+
+```{r}
+efo_disease_child_df <- do.call(rbind,lapply(gwas_assoc$MAPPED_TRAIT,efo_trait2higher,efo = efo,nchild = 2))
+efo_disease_child_df <- drop_na(efo_disease_child_df)
+
+efo_disease_child_df <- left_join(gwas_assoc,efo_disease_child_df, by = c("MAPPED_TRAIT"="trait"))
+
+efo_disease_child_df <- drop_na(efo_disease_child_df)
+
+colnames(efo_disease_child_df) <- c(c("MAPPED_TRAIT","MAPPED_TRAIT_URI","DISEASE_ID","DISEASE_NAME"))
+
+write_tsv(efo_disease_child_df,"../data_output/tsv/disease_children_efo_traits.tsv")
+```
+
+```{r}
+efo_disease_child_df2 <- do.call(rbind,lapply(gwas_assoc$MAPPED_TRAIT,efo_trait2higher,efo = efo,nchild = 3))
+efo_disease_child_df2 <- drop_na(efo_disease_child_df2)
+
+efo_disease_child_df2 <- left_join(gwas_assoc,efo_disease_child_df2, by = c("MAPPED_TRAIT"="trait"))
+
+efo_disease_child_df2 <- drop_na(efo_disease_child_df2)
+
+colnames(efo_disease_child_df2) <- c(c("MAPPED_TRAIT","MAPPED_TRAIT_URI","DISEASE_ID","DISEASE_NAME"))
+
+write_tsv(efo_disease_child_df2,"../data_output/tsv/disease_children2_efo_traits.tsv")
+```
+
+```{r}
+efo_disease_child_df <- read_tsv("../data_output/tsv/disease_children_efo_traits.tsv")
+```
+
+
+Write SNP EFO ID table
+
+```{r}
+gwas_catalog_snp <- read.delim("../data_output/gwas_catalog/gwas_snps_trait.tsv",header = F)
+
+gwas_catalog_snp <- gwas_catalog_snp %>%
+  separate_rows(V3, sep = "-")
+
+snp_efo_id <- left_join(gwas_catalog_snp,efo_disease_df,by = c("V3"="MAPPED_TRAIT_URI"))
+
+snp_efo_id <- drop_na(snp_efo_id)
+
+snp_efo_id <- snp_efo_id[,c("V1","V2","DISEASE_ID")]
+
+snp_efo_id <- unique(snp_efo_id)
+
+write_tsv(snp_efo_id,"../data_output/gwas_catalog/gwas_snps_disease.tsv",col_names = F)
+```
+
+
+```{r}
+gwas_catalog_snp <- read.delim("../data_output/gwas_catalog/gwas_snps_trait.tsv",header = F)
+
+gwas_catalog_snp <- gwas_catalog_snp %>%
+  separate_rows(V3, sep = "-")
+
+snp_efo_id <- left_join(gwas_catalog_snp,efo_disease_child_df,by = c("V3"="MAPPED_TRAIT_URI"))
+
+snp_efo_id <- drop_na(snp_efo_id)
+
+snp_efo_id <- snp_efo_id[,c("V1","V2","DISEASE_ID")]
+
+snp_efo_id <- unique(snp_efo_id)
+
+write_tsv(snp_efo_id,"../data_output/gwas_catalog/gwas_snps_disease_children.tsv",col_names = F)
+
+```
+
+
+```{r}
+gwas_catalog_snp <- read.delim("../data_output/gwas_catalog/gwas_snps_trait.tsv",header = F)
+
+gwas_catalog_snp <- gwas_catalog_snp %>%
+  separate_rows(V3, sep = "-")
+
+snp_efo_id <- left_join(gwas_catalog_snp,efo_disease_child_df2,by = c("V3"="MAPPED_TRAIT_URI"))
+
+snp_efo_id <- drop_na(snp_efo_id)
+
+snp_efo_id <- snp_efo_id[,c("V1","V2","DISEASE_ID")]
+
+snp_efo_id <- unique(snp_efo_id)
+
+write_tsv(snp_efo_id,"../data_output/gwas_catalog/gwas_snps_disease_children2.tsv",col_names = F)
+```
+
+
+
+```{r}
+length(unique(snp_efo_id$DISEASE_ID))
+```
+
+
+gwas_file=/hpc/group/vertgenlab/jes157/haqers/data_clean/gwas_catalog/gwas_snps_disease_children.tsv
+plink_ld=/hpc/group/vertgenlab/jes157/haqers/data_output/plink/gwas_ld_variants_27jan22_7r2.ld
+out_dir=/hpc/group/vertgenlab/jes157/haqers/data_output/bed/efo_mapped_disease_children
+
+```{r}
+snp_efo_id <- readr::read_tsv("../data_output/gwas_catalog/gwas_snps_disease.tsv",col_names = F)
+efo <- ontologyIndex::get_ontology("../data_raw/obo/efo.obo")
+
+efo$children[snp_efo_id$X3[1]]
+
+
+```
+
+
+
+
+
+Include GWAS snp in the output
+
+```{bash}
+gwas_tsv=../data_output/gwas_catalog/gwas_snps_trait.tsv    
+plinkld=../data_output/plink/chr22_all_gwas_snps_out_ceu_unrel.ld
+r2_cutoff=0.7
+out_dir=../data_output/bed/test_traits
+
+awk -v cutoff=$r2_cutoff 'NR > 1 && $7 > cutoff {print $4, $5 - 1,$5, $3}' OFS="\t" $plinkld
+
+awk 'FNR==NR{a[$1]=$2 FS $3;next}{ print $0, a[$1]}' $gwas_tsv $plinkld
+
+```
+
+
+get_all_chrs_filt_plinkld.sh
+```{bash}
+ld_files_dir=../data_output/plink/gwas_ld_snps_27jan22 
+r2_cutoff=0.7
+out_file=../data_output/plink/gwas_ld_snps_all_chrs_filt.ld
+
+echo -e "CHR_A\tBP_A\tSNP_A\tCHR_B\tBP_B\tSNP_B\tR2" > $out_file
+
+for ld_file in ${ld_files_dir}/*ld;
+do
+  awk -v cutoff=$r2_cutoff 'NR>1 && $7>cutoff' OFS="\t" $ld_file >> $out_file 
+done
+
+```
+```{bash}
+gwas_tsv_file="../data_output/gwas_catalog/gwas_snps_trait.tsv"
+ld_tsv_file="../data_output/plink/gwas_ld_snps_all_chrs_filt.ld"
+out_dir="../data_output/bed/test_traits"
+Rscript --vanilla ../scripts/get_traitbeds_from_plinkld.R $gwas_tsv_file $ld_tsv_file $out_dir
+```
+
+
+```{r}
+
+
+gwas_tsv_file <- "../data_output/gwas_catalog/gwas_snps_trait.tsv"
+ld_tsv_file <- "../data_output/plink/gwas_ld_snps_all_chrs_filt.ld"
+out_dir <- "../data_output/bed/test_traits"
+
+# Read mapped traits, split into list and rename list with bedfile names
+gwas_snps_trait <- read.table(gwas_tsv_file,header = FALSE)
+gwas_snps_trait_list <- split(gwas_snps_trait[,1:2],gwas_snps_trait[,3])
+names(gwas_snps_trait_list) <- paste0(out_dir,"/",names(gwas_snps_trait_list),".bed")
+
+# Read ld tsv file 
+ld_df_filt <- read.table(ld_tsv_file,header = TRUE)
+ld_df_filt$SNP_ID <- paste0("chr",ld_df_filt$CHR_A,":",ld_df_filt$BP_A)
+
+## Loop
+for (bed in names(gwas_snps_trait_list)){
+  
+  gwas_snps <- gwas_snps_trait_list[[bed]]
+  # Create ID column to match 
+  gwas_snps$SNP_ID <- paste0(gwas_snps$V1,":",gwas_snps$V2)
+  
+  # Match tables 
+  ld_snps <- ld_df_filt[ld_df_filt$SNP_ID %in% gwas_snps$SNP_ID,c("CHR_B","BP_B")]
+  if(nrow(ld_snps)==0) next
+  # Fix chrom names
+  ld_snps$CHR_B <- paste0("chr",ld_snps$CHR_B)
+  # Add table names
+  names(ld_snps) <- c("chr","bp_start")
+  names(gwas_snps) <- c("chr","bp_start")
+  # Add gwas snps to ld snps
+  ld_snps <- rbind(gwas_snps[,-3],ld_snps)
+  # Remove duplicates 
+  ld_snps <- unique(ld_snps)
+  # Make bed 
+  ld_snps$bp_end <- ld_snps$bp
+  ld_snps$bp_start <- ld_snps$bp_start - 1
+  
+  write.table(ld_snps,file = bed,sep = "\t",row.names = FALSE,col.names = FALSE,quote = FALSE)
+}
+
+```
+
+
+
+

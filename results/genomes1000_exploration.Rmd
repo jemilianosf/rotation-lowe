@@ -1,0 +1,908 @@
+---
+title: "genomes_1000_exploration"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rtracklayer)
+library(plyranges)
+
+```
+
+# Read 1000 genomes annotated clinvar variants
+
+```{r eval = FALSE}
+clin_vars_chr1<- read_tsv("../data_raw/genomes_1000/CCDG_13607_B01_GRM_WGS_2019-02-19_chr1.recalibrated_variants.annotated.clinical.txt")
+```
+```{r eval = FALSE}
+clin_vars_chr1_gr <- makeGRangesFromDataFrame(clin_vars_chr1,start.field = "POS",keep.extra.columns = TRUE,end.field = "POS" )
+
+```
+
+
+# Quick exploration with HAQERs
+
+Read haqers
+```{r eval = FALSE}
+haqers <- import.bed("../data_raw/bed/HAQER.bed")
+```
+
+
+
+```{r eval = FALSE}
+haqers$name <- paste0("haqer",1:length(haqers))
+haqers_snp_clinvar_chr1 <- plyranges::join_overlap_inner_within(clin_vars_chr1_gr, haqers)
+```
+
+```{r eval = FALSE}
+table(haqers_snp_clinvar_chr1$OMIM_MENDELIAN_MUT_PHENO)
+
+```
+
+## Try to get variants in LD with plink
+
+Got variants from
+http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_raw_GT_with_annot/
+
+20201028_CCDG_14151_B01_GRM_WGS_2020-08-05_chr21.recalibrated_variants.annotated.vcf.gz
+
+```{bash eval = FALSE}
+vcf=../data_raw/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.vcf.gz
+vcf=../data_raw/genomes_1000/20201028_CCDG_14151_B01_GRM_WGS_2020-08-05_chr21.recalibrated_variants.annotated.vcf.gz
+snp_list=../data_output/gwas_catalog/ld_gwas_list.txt
+out=../data_output/plink/out_ld.txt
+```
+
+```{r}
+"../data_output/gwas_catalog/ld_gwas_list.txt"
+```
+
+Plink LD
+```{bash eval = FALSE}
+plink --ld-snp-list $snp_list --vcf $vcf --r2 square bin  --ld-window-r2 0.7 --out $out
+
+
+plink --ld-snp-list $snp_list --vcf $vcf --r2 --ld-window-r2 0.7 --out $out
+
+plink --vcf $vcf --ld-window-r2 0.7 --r2 --out $out
+
+# Try using variant
+plink --ld-snps 22:10519265:CA:C --vcf $vcf --r2 --ld-window-r2 0.2 --out $out
+
+plink --ld-snps rs999372 --allow-no-samples --vcf $vcf --r2 --ld-window-r2 0.7 --out $out
+
+```
+
+
+
+Quick exploration
+
+Step 1: Get all variants in LD from chr 22
+```{bash eval = FALSE}
+vcf=../data_raw/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.vcf.gz
+out=../data_output/plink/chr22_all_out_ld.txt
+plink --vcf $vcf --ld-window-r2 0.7 --r2 --out $out
+
+```
+
+```{r eval = FALSE}
+ld_chr22 <- read_table("../data_output/plink/chr22_all_out_ld.txt.ld")
+
+ld_chr22_gr <- makeGRangesFromDataFrame(ld_chr22,
+                         seqnames.field = "CHR_A",
+                         start.field = "BP_A",
+                         end.field = "BP_A",
+                         keep.extra.columns = TRUE
+                         )
+```
+
+
+Step 2: Assign variants of the matrix to the closest GWAS catalog snp
+
+```{r}
+gwas_catalog_snp <- read_tsv("../data_raw/gwas_catalog/gwas_catalog_v1.0.2-associations_e105_r2021-12-21.tsv")
+```
+
+Note: some associations are lost here due to them not having a tag snp.
+```{r}
+
+gwas_catalog_snp <- gwas_catalog_snp[!is.na(gwas_catalog_snp$CHR_POS ),]
+
+gwas_catalog_snp$CHR_POS_NUMERIC <- as.numeric(gwas_catalog_snp$CHR_POS)
+
+
+gwas_catalog_snp <- gwas_catalog_snp[!is.na(gwas_catalog_snp$CHR_POS_NUMERIC),]
+```
+
+
+```{r}
+gwas_catalog_snp_gr <- makeGRangesFromDataFrame(gwas_catalog_snp,
+                         seqnames.field = "CHR_ID",
+                         start.field = "CHR_POS_NUMERIC",
+                         end.field = "CHR_POS_NUMERIC",
+                         keep.extra.columns = TRUE
+                         )
+```
+
+```{r}
+gwas_catalog_snp_gr_chr22 <- gwas_catalog_snp_gr[seqnames(gwas_catalog_snp_gr) == "22"]
+```
+
+
+
+
+
+Get B SNPs
+
+```{r eval = F }
+b_snp_ld_chr22_gwas_gr <- makeGRangesFromDataFrame(elementMetadata(ld_chr22_gwas),
+                         seqnames.field = "CHR_B",
+                         start.field = "BP_B",
+                         end.field = "BP_B",keep.extra.columns = T)
+```
+
+
+```{r eval = F}
+seqlevels(haqers) <- str_remove(seqlevels(haqers),"chr")
+
+haqers <- haqers[seqnames(haqers) == "22"]
+
+plyranges::join_overlap_left(haqers,b_snp_ld_chr22_gwas_gr)
+```
+
+# Check how many regions id
+
+Get snp ids from annotated vcf
+
+```{bash eval = FALSE }
+gzip -cd ../data_raw/genomes_1000/20201028_CCDG_14151_B01_GRM_WGS_2020-08-05_chr21.recalibrated_variants.annotated.vcf.gz |grep -v '^##'| cut -f1-3 > ../data_output/genomes_1000/20201028_CCDG_14151_B01_GRM_WGS_2020-08-05_chr21_snpid.txt
+```
+
+Read snps coords 
+
+```{r eval = F}
+chr21_annotated_variants <- read_table("../data_output/genomes_1000/20201028_CCDG_14151_B01_GRM_WGS_2020-08-05_chr21_snpid.txt")
+```
+
+```{r eval = F}
+chr21_annotated_variants_gr <- makeGRangesFromDataFrame(chr21_annotated_variants,
+                         seqnames.field = "#CHROM",
+                         start.field = "POS",
+                         end.field = "POS",keep.extra.columns = T)
+```
+
+```{r eval = F}
+gwas_catalog_snp_gr_chr21 <- gwas_catalog_snp_gr[seqnames(gwas_catalog_snp_gr) == "21"]
+
+```
+
+```{r eval = F} 
+
+seqlevels(chr21_annotated_variants_gr) <- str_remove(seqlevels(chr21_annotated_variants_gr) , "chr")
+```
+
+Intersect by id
+```{r eval = F}
+table(chr21_annotated_variants_gr$ID == ".")
+```
+
+```{r eval = F}
+length(gwas_catalog_snp_gr_chr21$SNPS)
+```
+```{r eval = F}
+summary(gwas_catalog_snp_gr_chr21$SNPS %in% chr21_annotated_variants_gr$ID)
+```
+
+Intersect by genomic position
+```{r eval = F}
+distonear_chr21 <- distanceToNearest(gwas_catalog_snp_gr_chr21, chr21_annotated_variants_gr)
+```
+
+They also mostly overlap by distance
+```{r eval = F}
+summary(elementMetadata(distonear_chr21)$distance)
+```
+
+
+```{r eval = F}
+gwas_catalog_snp_gr_chr21_id <- gwas_catalog_snp_gr_chr21[gwas_catalog_snp_gr_chr21$SNPS %in% chr21_annotated_variants_gr$ID]
+
+gwas_catalog_snp_gr_chr21_noid <- gwas_catalog_snp_gr_chr21[!gwas_catalog_snp_gr_chr21$SNPS %in% chr21_annotated_variants_gr$ID]
+
+```
+
+These variants overlap by ID and distance
+```{r eval = F}
+distonear_chr21_id <- distanceToNearest(gwas_catalog_snp_gr_chr21_id, chr21_annotated_variants_gr)
+
+summary(elementMetadata(distonear_chr21_id)$distance)
+
+```
+
+```{r eval = F}
+istonear_chr21_noid <- distanceToNearest(gwas_catalog_snp_gr_chr21_noid, chr21_annotated_variants_gr)
+
+summary(elementMetadata(istonear_chr21_noid)$distance == 0)
+
+```
+
+# Do the low coverage phase 3 variants overlap gwas catalog by coordinate?
+```{bash eval = F}
+gzip -cd ../data_raw/genomes_1000/ALL.chr22.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz |grep -v '^##'| cut -f1-3 > ../data_output/genomes_1000/ALL.chr22.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.snpid.txt
+```
+
+
+```{r eval = F}
+chr22_phased_lowcov_phase3 <- read_table("../data_output/genomes_1000/ALL.chr22.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.snpid.txt")
+```
+
+```{r eval = F}
+chr22_phased_lowcov_phase3_gr <- makeGRangesFromDataFrame(chr22_phased_lowcov_phase3,
+                         seqnames.field = "#CHROM",
+                         start.field = "POS",
+                         end.field = "POS",keep.extra.columns = T)
+```
+
+```{r eval = F}
+
+
+distonear_chr22 <- distanceToNearest(gwas_catalog_snp_gr_chr22, chr22_phased_lowcov_phase3_gr)
+
+summary(elementMetadata(distonear_chr22)$distance == 0)
+
+```
+
+
+# Do the high coverage phase 3 variants overlap gwas catalog by coordinate?
+```{bash eval = F}
+gzip -cd ../data_raw/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.vcf.gz |grep -v '^##'| cut -f1-3 > ../data_output/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.snp_id.txt
+```
+
+
+```{r }
+chr22_phased_highcov_phase3 <- read_table("../data_output/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.snp_id.txt")
+```
+
+```{r }
+chr22_phased_highcov_phase3_gr <- makeGRangesFromDataFrame(chr22_phased_highcov_phase3,
+                         seqnames.field = "#CHROM",
+                         start.field = "POS",
+                         end.field = "POS",keep.extra.columns = T)
+
+seqlevels(chr22_phased_highcov_phase3_gr) <- str_remove(seqlevels(chr22_phased_highcov_phase3_gr),"chr")
+```
+
+```{r eval = FALSE}
+
+
+distonear_chr22_highcov <- distanceToNearest(gwas_catalog_snp_gr_chr22, chr22_phased_highcov_phase3_gr)
+
+summary(elementMetadata(distonear_chr22_highcov)$distance == 0)
+
+```
+
+# Overlap ld22 and variants chr22
+
+They do overlap
+
+```{r eval = FALSE}
+
+
+distonear_ld_chr22 <- distanceToNearest(ld_chr22_gr, chr22_phased_highcov_phase3_gr)
+
+summary(elementMetadata(distonear_ld_chr22)$distance == 0)
+
+```
+
+# Get overlaping variants from GWAS catalog in the vcf and get a list of variant ids
+
+Filter out multi snp records from gwas catalog
+```{r}
+gwas_catalog_snp_gr_chr22 <- gwas_catalog_snp_gr_chr22[!is.na(gwas_catalog_snp_gr_chr22$SNP_ID_CURRENT)]
+```
+
+How to handle the fact that there could be different traits associated to the same snp.
+Get a list of unique ranges:
+Keep SNPs column for later join with phenotype info
+```{r}
+gwas_catalog_snp_gr_chr22_uq <- gwas_catalog_snp_gr_chr22[,"SNPS"]
+gwas_catalog_snp_gr_chr22_uq <- unique(gwas_catalog_snp_gr_chr22_uq)
+```
+
+Not all match a variant in the vcf file, but most do
+```{r eval = FALSE}
+distonear_gwascat_chr22 <- distanceToNearest(gwas_catalog_snp_gr_chr22_uq, chr22_phased_highcov_phase3_gr)
+table(distonear_gwascat_chr22@elementMetadata$distance != 0)
+```
+
+Some variants in 1000 genomes VCF are duplicated
+```{r eval = FALSE}
+any(duplicated(chr22_phased_highcov_phase3_gr))
+```
+
+Exploring more of the duplicates
+
+They seem to be due to the original VCF file reporting different variants in duplicate ranges, so for now I will skip these but might be a good idea to look more into this later on.
+
+```{r}
+chr22_phased_highcov_phase3_gr[duplicated(chr22_phased_highcov_phase3_gr) | duplicated(chr22_phased_highcov_phase3_gr,fromLast = TRUE)]
+```
+
+```{r}
+chr22_phased_highcov_phase3_gr <- unique(chr22_phased_highcov_phase3_gr)
+
+```
+
+Now there is a 1-1 match between gwas snps and 1000 genomes vcf 
+```{r}
+gwas_100genomes_join <- plyranges::join_overlap_left(gwas_catalog_snp_gr_chr22_uq, chr22_phased_highcov_phase3_gr)
+
+```
+
+Print list to file to use as snpid in plink ld calculation
+```{r eval = FALSE}
+writeLines(gwas_100genomes_join$ID, "../data_output/plink/ld_gwas_1000genomesid_chr22.txt")
+```
+
+Get LD estimates
+```{bash eval = FALSE}
+vcf=../data_raw/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.vcf.gz
+out=../data_output/plink/chr22_all_gwas_snps_out_ld.txt
+snp_list=../data_output/plink/ld_gwas_1000genomesid_chr22.txt
+plink --ld-snp-list $snp_list --vcf $vcf --ld-window-r2 0.2 --ld-window 5000000 --ld-window-kb 50000 --r2 --out $out
+
+```
+
+Read LD file
+```{r}
+chr22_all_gwas_snps_out_ld <- read_table("../data_output/plink/chr22_all_gwas_snps_out_ld.txt.ld")
+```
+  - Calculate the average "decay length"
+  
+```{r}
+
+chr22_all_gwas_snps_out_ld %>%
+  group_by(SNP_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10()
+
+
+``` 
+
+  
+```{r}
+
+chr22_all_gwas_snps_out_ld %>%
+  filter(R2 >= 0.7) %>%
+  group_by(SNP_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10()
+
+
+```
+
+  - Global average LD decay 
+Why are some 
+```{r}
+chr22_all_gwas_snps_out_ld %>%
+ggplot(aes(abs(BP_A - BP_B)/1e3, R2)) +
+  geom_bin2d( ) +
+  scale_fill_gradient(low="lightgray",high="blue",trans="log10") +
+  geom_smooth(color = "black") +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  xlab("Distance (Kb)")
+```
+  - LD Manhattan plot per SNP to compare with ensembl
+
+examples
+
+```{r}
+"22:17661069:C:T" 
+
+gwas_100genomes_join[ which(gwas_100genomes_join$ID == "22:17661069:C:T") ]
+gwas_100genomes_join[ which(gwas_100genomes_join$ID == "22:17006586:G:A") ]
+
+```
+
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:17660569-17661569;v=rs8141347;vdb=variation;vf=185116190
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:17006086-17007086;v=rs138596453;vdb=variation;vf=187439569
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:40420337-40421337;v=rs2072857;vdb=variation;vf=184514527
+
+rs8141347
+rs138596453
+rs2072857
+
+```{r}
+
+bp_a_pos <- 17661069
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:17661069:C:T") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos - 100000)/1e6 ,(bp_a_pos +  100000)/1e6 ))
+```
+
+```{r}
+
+bp_a_pos <- 17006586
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:17006586:G:A") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos - 100000)/1e6 ,(bp_a_pos +  100000)/1e6 ))
+
+```
+
+
+
+
+```{r}
+
+bp_a_pos <- 40420837
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:40420837:G:A") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos - 100000)/1e6 ,(bp_a_pos +  100000)/1e6 ))
+
+```
+
+# Try the blocks calculation option from plink
+
+Get LD estimates
+```{bash eval = FALSE}
+vcf=../data_raw/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.vcf.gz
+out=../data_output/plink/chr22_all_gwas_snps_out_blocks
+
+plink --vcf $vcf --blocks no-pheno-req --out $out --blocks-max-kb 50000
+```
+
+Read LD file
+```{r}
+chr22_all_gwas_snps_out_ld_blocks <- read_table("../data_output/plink/chr22_all_gwas_snps_out_blocks.blocks.det")
+```
+
+```{r}
+p1 <- chr22_all_gwas_snps_out_ld_blocks %>%
+  mutate(rangelen = BP2 - BP1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10()
+
+
+
+p2 <- chr22_all_gwas_snps_out_ld %>%
+  filter(R2 >= 0.98) %>%
+  group_by(SNP_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  filter(rangelen < 100000) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10() 
+
+library(patchwork)
+(p1 / p2) 
+```
+Filter blocks by overlapping GWAS snps
+
+```{r}
+chr22_all_gwas_snps_out_ld_blocks_gr <- makeGRangesFromDataFrame(chr22_all_gwas_snps_out_ld_blocks,
+                         seqnames.field = "CHR",
+                         start.field = "BP1",
+                         end.field = "BP2",keep.extra.columns = TRUE)
+```
+
+```{r}
+chr22_all_gwas_snps_out_ld_blocks_gr_in_gwas <- join_overlap_inner(chr22_all_gwas_snps_out_ld_blocks_gr, gwas_100genomes_join)
+```
+
+```{r}
+p3 <- as.data.frame(chr22_all_gwas_snps_out_ld_blocks_gr_in_gwas) %>%
+  mutate(rangelen = width) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10()
+```
+
+```{r}
+p1 / p3
+```
+```{r}
+(p2 / p3) 
+```
+
+```{r}
+summary(chr22_all_gwas_snps_out_ld_blocks_gr_in_gwas$NSNPS)
+```
+
+
+# Figure out how to filter the vcf
+
+```{r}
+ped_3202 <- read_table("../data_raw/genomes_1000/20130606_g1k_3202_samples_ped_population.txt")
+
+ped_3202 %>%
+  filter(FatherID == 0 & MotherID == 0) %>%
+  pull("SampleID") %>%
+  length()
+```
+
+
+Get "list of samples to keep to use in plink --extract" file
+```{bash}
+# Get list of European CEU samples
+cut -f1,4 ../data_raw/genomes_1000/igsr-1000genomes-30x-grch38-samples.tsv | grep -w 'CEU' | cut -f1 | sort > ../data_output/plink/sample_list_ceu.txt
+# Get list of all  samples
+cut -f1 ../data_raw/genomes_1000/igsr-1000genomes-30x-grch38-samples.tsv | sort > ../data_output/plink/sample_list_all.txt
+
+# Get list of parent samples
+awk '{print $2"\n"$3}' ../data_raw/genomes_1000/1kGP.3202_samples.pedigree_info.txt |sort |uniq > ../data_output/plink/sample_list_parents.txt
+
+# Get European samples that are not related 
+comm -23 ../data_output/plink/sample_list_ceu.txt ../data_output/plink/sample_list_parents.txt > ../data_output/plink/sample_list_ceu_unrel.txt
+
+comm -23 ../data_output/plink/sample_list_all.txt ../data_output/plink/sample_list_parents.txt > ../data_output/plink/sample_list_all_unrel.txt
+
+```
+
+List of original 2504 individuals
+"http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20130502.ALL.panel"
+
+Split and write a file of unrelated samples for each population
+```{r}
+unrelated_samples <- read_table("../data_raw/genomes_1000/integrated_call_samples_v3.20130502.ALL.panel")
+
+unrelated_samples <- unrelated_samples[,c("sample","pop")]
+
+unrelated_samples_list <- split(unrelated_samples[,c("sample","sample")], unrelated_samples$pop)
+
+iwalk(unrelated_samples_list, 
+     ~ write_tsv( x = .x,
+                  file = paste0("../data_output/plink/sample_list_unrel_",.y,".txt"),col_names = FALSE))
+
+```
+
+
+```{bash eval = FALSE}
+vcf=../data_raw/genomes_1000/CCDG_14151_B01_GRM_WGS_2020-08-05_chr22.filtered.shapeit2-duohmm-phased.vcf.gz
+out=../data_output/plink/chr22_all_gwas_snps_out_ceu_unrel
+snp_list=../data_output/plink/ld_gwas_1000genomesid_chr22.txt
+samples_list=../data_output/plink/sample_list_unrel_ceu.txt
+plink --keep $samples_list --ld-snp-list $snp_list --vcf $vcf --ld-window-r2 0.2 --ld-window 5000000 --ld-window-kb 50000 --r2 --out $out
+
+
+```
+
+Re-do plots
+
+Read LD file
+```{r}
+chr22_all_gwas_snps_out_ld <- read_table("../data_output/plink/chr22_all_gwas_snps_out_gbr_unrel.ld")
+```
+  - Calculate the average "decay length"
+  
+```{r}
+
+chr22_all_gwas_snps_out_ld %>%
+  group_by(SNP_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10()
+
+
+``` 
+
+  
+```{r}
+
+chr22_all_gwas_snps_out_ld %>%
+  filter(R2 >= 0.7) %>%
+  group_by(SNP_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10()
+
+
+```
+
+  - Global average LD decay 
+Why are some 
+```{r}
+chr22_all_gwas_snps_out_ld %>%
+ggplot(aes(abs(BP_A - BP_B)/1e3, R2)) +
+  geom_bin2d( ) +
+  scale_fill_gradient(low="lightgray",high="blue") +
+  geom_smooth(color = "black") +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  xlab("Distance (Kb)")
+```
+```{r}
+chr22_all_gwas_snps_out_ld %>%
+  filter(abs(BP_A - BP_B) < 1e6) %>%
+ggplot(aes(abs(BP_A - BP_B)/1e3, R2)) +
+  geom_bin2d( ) +
+  scale_fill_gradient(low="lightgray",high="blue") +
+  geom_smooth(color = "black") +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  xlab("Distance (Kb)") 
+  
+```
+  - LD Manhattan plot per SNP to compare with ensembl
+
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:17660569-17661569;v=rs8141347;vdb=variation;vf=185116190
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:17006086-17007086;v=rs138596453;vdb=variation;vf=187439569
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:40420337-40421337;v=rs2072857;vdb=variation;vf=184514527
+
+rs8141347
+rs138596453
+rs2072857
+
+```{r}
+
+bp_a_pos <- 17661069
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:17661069:C:T") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos - 100000)/1e6 ,(bp_a_pos +  100000)/1e6 ))
+
+```
+
+```{r}
+
+bp_a_pos <- 17006586
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:17006586:G:A") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos - 100000)/1e6 ,(bp_a_pos +  100000)/1e6 ))
+
+```
+
+
+
+
+```{r}
+
+bp_a_pos <- 40420837
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:40420837:G:A") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos - 100000)/1e6 ,(bp_a_pos +  100000)/1e6 ))
+
+```
+
+It looks like I'm getting higher R2 estimates compared with ensembl.
+I'm thinking it could be due to 
+- Them using the low coverage variants.
+- Different filters with plink.
+
+An alternative would be to use the API and get their estimates (?).
+
+
+# Check LD estimates using low coverage variants
+
+
+Set ids for vcf
+
+```{bash}
+vcf_in=../data_raw/genomes_1000/ALL.chr22.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz
+vcf_out=../data_output/genomes_1000/ALL.chr22.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased_id.vcf.gz
+bcftools annotate --set-id +'%CHROM\:%POS\:%REF\:%FIRST_ALT' $vcf_in | gzip -c - > $vcf_out
+```
+
+match gwas and vcf variants
+
+
+```{bash eval = F}
+gzip -cd $vcf_out |grep -v '^##'| cut -f1-3 > ../data_output/genomes_1000/ALL.chr22.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased_idsnp_id.txt
+```
+
+
+```{r }
+chr22_phased_lowcov_phase3 <- read_table("../data_output/genomes_1000/ALL.chr22.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased_idsnp_id.txt")
+```
+
+```{r }
+chr22_phased_lowcov_phase3_gr <- makeGRangesFromDataFrame(chr22_phased_lowcov_phase3,
+                         seqnames.field = "#CHROM",
+                         start.field = "POS",
+                         end.field = "POS",keep.extra.columns = T)
+
+seqlevels(chr22_phased_lowcov_phase3_gr) <- str_remove(seqlevels(chr22_phased_lowcov_phase3_gr),"chr")
+```
+
+```{r}
+chr22_phased_lowcov_phase3_gr <- unique(chr22_phased_lowcov_phase3_gr)
+
+gwas_100genomes_join_lowcov <- plyranges::join_overlap_left(gwas_catalog_snp_gr_chr22_uq, chr22_phased_lowcov_phase3_gr)
+
+gwas_100genomes_join_lowcov <- gwas_100genomes_join_lowcov[!is.na(gwas_100genomes_join_lowcov$ID),]
+
+writeLines(gwas_100genomes_join_lowcov$ID, "../data_output/plink/ld_gwas_1000genomesid_chr22_lowcov.txt")
+```
+
+```{bash}
+vcf=$vcf_out
+out=../data_output/plink/chr22_all_gwas_snps_out_gbr_unrel_lowcov
+snp_list=../data_output/plink/ld_gwas_1000genomesid_chr22_lowcov.txt
+samples_list=../data_output/plink/sample_list_unrel_gbr.txt
+plink --keep $samples_list --ld-snp-list $snp_list --vcf $vcf --ld-window-r2 0.2 --ld-window 5000000 --ld-window-kb 50000 --r2 --out $out
+
+```
+
+
+Read LD file
+```{r}
+chr22_all_gwas_snps_out_ld <- read_table("../data_output/plink/chr22_all_gwas_snps_out_gbr_unrel_lowcov.ld")
+```
+  - Calculate the average "decay length"
+  
+```{r}
+
+chr22_all_gwas_snps_out_ld %>%
+  group_by(SNP_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10()
+
+
+``` 
+
+  
+```{r}
+
+chr22_all_gwas_snps_out_ld %>%
+  filter(R2 >= 0.7) %>%
+  group_by(SNP_A) %>%
+  summarise(range1 = range(BP_B)[1],
+            range2 = range(BP_B)[2]) %>%
+  mutate(rangelen = range2 - range1) %>%
+  ggplot(aes((rangelen+1)/1e3)) +
+  geom_histogram(bins = 50, color = "white") +
+  theme_light() +
+  xlab("LD block length (kb)") +
+  scale_x_log10()
+
+
+```
+
+  - Global average LD decay 
+Why are some 
+```{r}
+chr22_all_gwas_snps_out_ld %>%
+ggplot(aes(abs(BP_A - BP_B)/1e3, R2)) +
+  geom_bin2d( ) +
+  scale_fill_gradient(low="lightgray",high="blue",trans="log10") +
+  geom_smooth(color = "black") +
+  theme_light() +
+  theme(aspect.ratio = 1) +
+  xlab("Distance (Kb)")
+```
+  
+  - LD Manhattan plot per SNP to compare with ensembl
+
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:17660569-17661569;v=rs8141347;vdb=variation;vf=185116190
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:17006086-17007086;v=rs138596453;vdb=variation;vf=187439569
+https://useast.ensembl.org/Homo_sapiens/Variation/LDPlot?db=core;pop1=373514;r=22:40420337-40421337;v=rs2072857;vdb=variation;vf=184514527
+
+rs8141347
+rs138596453
+rs2072857
+
+```{r}
+
+bp_a_pos <- 17661069
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:17661069:C:T") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos / 1e6) - 0.012 , (bp_a_pos / 1e6) + 0.012 ))
+
+```
+
+```{r}
+
+bp_a_pos <- 17006586
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:17006586:G:A") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos / 1e6) - 0.05 , (bp_a_pos / 1e6) + 0.05 ))
+
+```
+
+
+
+
+```{r}
+
+bp_a_pos <- 40420837
+chr22_all_gwas_snps_out_ld %>%
+  filter(SNP_A == "22:40420837:G:A") %>%
+ggplot(aes(BP_B / 1e6, R2)) +
+  geom_point() +
+  geom_vline(xintercept = bp_a_pos / 1e6)  +
+  geom_hline(yintercept = 0.7,lty = "dashed", color = "red") +
+  theme_light() +
+  xlab("Position (Mb)") +
+  xlim(c( (bp_a_pos / 1e6) - 0.05 , (bp_a_pos / 1e6) + 0.05 ))
+
+```
+
+
+
+
